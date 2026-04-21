@@ -1,0 +1,91 @@
+global:
+  data_root: data
+  timeout_seconds: 120
+  max_retries: 3
+  user_agent: equatorial-data-fetch/0.1.0
+
+study_area:
+  country_code: STP
+  country_name: Sao Tome and Principe
+  slug: sao-tome-and-principe
+  geofabrik_id: africa/sao-tome-and-principe
+  bbox: [6.433333, -0.016667, 7.5, 1.75]
+
+datasets:
+  gadm:
+    enabled: true
+    source_url: https://geodata.ucdavis.edu/gadm/gadm4.1/gpkg
+    spatial_resolution_raw: vector administrative boundaries
+
+  osm:
+    enabled: false
+    extract_format: pbf
+    source_url: https://download.geofabrik.de/index-v1-nogeom.json
+
+  road_surface:
+    enabled: true
+    source_url: https://data.humdata.org/organization/heidelberg-institute-for-geoinformation-technology?dataseries_name=Heidelberg%20Institute%20for%20Geoinformation%20Technology%20-%20Road%20Surface%20Data&q=&ext_page_size=25
+    spatial_resolution_raw: vector road segments with binary paved/unpaved attribution (country releases)
+
+  chirps:
+    enabled: true
+    version: v3.0
+    frequency: monthly
+    region: global
+    years: [2024]
+    months: [1]
+
+  era5:
+    enabled: true
+    dataset_id: reanalysis-era5-land-monthly-means
+    target_filename: era5-land-monthly-{slug}-2024-q1.nc
+    spatial_resolution_raw: 0.1 degree grid
+    temporal_resolution: monthly
+    request:
+      product_type: monthly_averaged_reanalysis
+      variable:
+        - 2m_temperature
+        - total_precipitation
+        - volumetric_soil_water_layer_1
+      year: ["2024"]
+      month: ["01", "02", "03"]
+      time: "00:00"
+      data_format: netcdf
+      download_format: unarchived
+      area: ["{north}", "{west}", "{south}", "{east}"]
+
+  flood:
+    enabled: true
+    return_periods: [100]
+    download_reclass: false
+
+  coastaldem:
+    enabled: true
+
+  soilgrids:
+    enabled: true
+    properties: [clay, sand, silt, bdod, soc]
+    depth_interval: 0-5cm
+    quantile: Q0.5
+
+  ibtracs:
+    enabled: true
+    version: v04r01
+    format: netcdf
+    subsets: [ALL, since1980]
+    download_name_mapping: true
+
+  gem:
+    enabled: true
+    source_url: https://zenodo.org/records/8409647/files/GEM-GSHM_PGA-475y-rock_v2023.zip?download=1
+    spatial_resolution_raw: global seismic hazard raster interpolated from hazard values calculated at about ~6 km point spacing
+
+  liquefaction:
+    enabled: true
+    source_url: https://zenodo.org/records/2583746/files/liquefaction_v1_deg.tif?download=1
+    spatial_resolution_raw: global raster in EPSG:4326; susceptibility classes 0-5 from the Zhu model family
+
+  flopros:
+    enabled: true
+    source_url: https://nhess.copernicus.org/articles/16/1049/2016/nhess-16-1049-2016-supplement.zip
+    spatial_resolution_raw: protection-standard metadata from the official FLOPROS supplement (shapefile and workbook)

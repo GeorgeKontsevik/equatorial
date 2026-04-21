@@ -1,0 +1,445 @@
+"""Render quick-look PNG previews for downloaded datasets in the active study area."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import geopandas as gpd
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pycountry
+import rasterio
+import xarray as xr
+from matplotlib.lines import Line2D
+from rasterio.mask import mask
+from rasterio.merge import merge
+from shapely.geometry import LineString, box
+
+from src.data.config import load_config
+
+
+matplotlib.use("Agg")
+
+CROP_FILE = "Table_CROPGRIDSv1.08_COU.xlsx"
+SPAM_CODES = {
+    "SOYB": "Soybean",
+    "MAIZ": "Maize",
+    "RICE": "Rice",
+    "SUGC": "Sugarcane",
+    "SUNF": "Sunflower",
+    "COTT": "Cotton",
+    "BEAN": "Bean",
+    "POTA": "Potato",
+    "WHEA": "Wheat",
+    "SORG": "Sorghum",
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Render PNG previews for all currently downloaded datasets in the active study area.")
+    parser.add_argument("--config", type=Path, default=Path("config/datasets.yaml"), help="Path to the dataset configuration YAML file.")
+    parser.add_argument("--country-code", type=str, default="", help="Optional ISO3 code to render a different country without changing config.")
+    return parser.parse_args()
+
+
+def _country_boundary(project_root: Path, iso3: str) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    gadm_path = project_root / "data" / "raw" / "gadm" / iso3 / f"gadm41_{iso3}.gpkg"
+    layers = ["ADM_ADM_0", "ADM_ADM_1", "ADM_ADM_2"]
+    admin_frames: list[gpd.GeoDataFrame] = []
+    for layer in layers:
+        try:
+            frame = gpd.read_file(gadm_path, layer=layer)
+        except Exception:
+            continue
+        if not frame.empty:
+            admin_frames.append(frame.to_crs("EPSG:4326"))
+
+    if not admin_frames:
+        raise FileNotFoundError(f"No readable GADM layers found in {gadm_path}")
+
+    country = admin_frames[0][["geometry"]].copy()
+    country["name"] = iso3
+    admin = pd.concat(admin_frames, ignore_index=True)
+    admin = gpd.GeoDataFrame(admin, geometry="geometry", crs="EPSG:4326")
+    return country, admin
+
+
+def _setup_axes(country: gpd.GeoDataFrame, title: str) -> tuple[plt.Figure, plt.Axes]:
+    fig, ax = plt.subplots(figsize=(8, 8))
+    minx, miny, maxx, maxy = country.total_bounds
+    dx = max(maxx - minx, 0.2)
+    dy = max(maxy - miny, 0.2)
+    pad_x = dx * 0.1
+    pad_y = dy * 0.1
+    ax.set_xlim(minx - pad_x, maxx + pad_x)
+    ax.set_ylim(miny - pad_y, maxy + pad_y)
+    ax.set_aspect("equal")
+    ax.set_title(title)
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    country.boundary.plot(ax=ax, color="black", linewidth=1.2, zorder=10)
+    return fig, ax
+
+
+def _save(fig: plt.Figure, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _render_note(country: gpd.GeoDataFrame, out_path: Path, title: str, message: str) -> Path:
+    fig, ax = _setup_axes(country, title)
+    ax.text(0.5, 0.5, message, transform=ax.transAxes, ha="center", va="center")
+    _save(fig, out_path)
+    return out_path
+
+
+def _render_gadm(country: gpd.GeoDataFrame, admin: gpd.GeoDataFrame, out_dir: Path) -> Path:
+    fig, ax = _setup_axes(country, "GADM Administrative Boundaries")
+    admin.boundary.plot(ax=ax, color="#2c7fb8", linewidth=0.6, alpha=0.7)
+    country.boundary.plot(ax=ax, color="black", linewidth=1.3)
+    out = out_dir / "gadm_boundaries.png"
+    _save(fig, out)
+    return out
+
+
+def _road_surface_class(frame: gpd.GeoDataFrame) -> pd.Series:
+    preferred = [
+        "combined_surface_DL_priority",
+        "combined_surface_osm_priority",
+        "osm_surface_class",
+        "pred_label",
+        "surface",
+    ]
+    values = pd.Series("unknown", index=frame.index, dtype="object")
+    for column in preferred:
+        if column not in frame.columns:
+            continue
+        raw = frame[column].astype("string").str.lower()
+        values = values.where(~raw.isin(["paved", "unpaved"]), raw.fillna(values))
+    return values.fillna("unknown")
+
+
+def _render_road_surface(country: gpd.GeoDataFrame, path: Path, out_dir: Path) -> Path:
+    roads = gpd.read_file(path).to_crs("EPSG:4326")
+    roads = roads.clip(country)
+    roads["surface_group"] = _road_surface_class(roads)
+
+    fig, ax = _setup_axes(country, "Road Surface")
+    palette = {"paved": "#1a9641", "unpaved": "#d7191c", "unknown": "#999999"}
+    for group, color in palette.items():
+        subset = roads.loc[roads["surface_group"] == group]
+        if not subset.empty:
+            subset.plot(ax=ax, linewidth=0.6, color=color, alpha=0.8)
+
+    legend_handles = [Line2D([0], [0], color=color, lw=2, label=group) for group, color in palette.items()]
+    ax.legend(handles=legend_handles, loc="lower left")
+    out = out_dir / "road_surface.png"
+    _save(fig, out)
+    return out
+
+
+def _render_single_raster(country: gpd.GeoDataFrame, path: Path, out_path: Path, title: str, cmap: str = "viridis") -> Path | None:
+    with rasterio.open(path) as src:
+        mask_shapes = country.geometry
+        if src.crs:
+            mask_shapes = country.to_crs(src.crs).geometry
+        try:
+            clipped, transform = mask(src, mask_shapes, crop=True, filled=False)
+        except ValueError:
+            return None
+    band = clipped[0]
+    data = np.ma.masked_invalid(band)
+    data = np.ma.masked_where(data == 0, data)
+
+    fig, ax = _setup_axes(country, title)
+    if data.count() > 0:
+        left = transform.c
+        top = transform.f
+        right = left + transform.a * data.shape[1]
+        bottom = top + transform.e * data.shape[0]
+        image = ax.imshow(data, extent=[left, right, bottom, top], origin="upper", cmap=cmap, alpha=0.85, zorder=1)
+        fig.colorbar(image, ax=ax, fraction=0.04, pad=0.02)
+    else:
+        ax.text(0.5, 0.5, "No raster values in study area", transform=ax.transAxes, ha="center", va="center")
+
+    _save(fig, out_path)
+    return out_path
+
+
+def _render_flood(country: gpd.GeoDataFrame, raw_root: Path, out_dir: Path) -> Path | None:
+    rp_dir = raw_root / "flood" / "jrc_glofas" / "RP100"
+    if not rp_dir.exists():
+        return None
+
+    bbox_geom = box(*country.total_bounds)
+    candidate_paths: list[Path] = []
+    for tif_path in sorted(rp_dir.glob("*.tif")):
+        with rasterio.open(tif_path) as src:
+            if box(*src.bounds).intersects(bbox_geom):
+                candidate_paths.append(tif_path)
+
+    if not candidate_paths:
+        return None
+
+    datasets = [rasterio.open(path) for path in candidate_paths]
+    try:
+        merged, transform = merge(datasets)
+        meta = datasets[0].meta.copy()
+        meta.update(
+            {
+                "height": merged.shape[1],
+                "width": merged.shape[2],
+                "transform": transform,
+                "count": merged.shape[0],
+            }
+        )
+    finally:
+        for dataset in datasets:
+            dataset.close()
+
+    temp_path = out_dir / "_temp_flood_mosaic.tif"
+    with rasterio.open(temp_path, "w", **meta) as dst:
+        dst.write(merged)
+
+    try:
+        out = _render_single_raster(country, temp_path, out_dir / "flood_rp100.png", "Flood Hazard RP100", cmap="Blues")
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return out
+
+
+def _render_ibtracs(country: gpd.GeoDataFrame, path: Path, out_dir: Path) -> Path:
+    bbox = country.total_bounds
+    ds = xr.open_dataset(path)
+    try:
+        lon = ds["lon"].values
+        lat = ds["lat"].values
+        in_bbox = (
+            np.isfinite(lon)
+            & np.isfinite(lat)
+            & (lon >= bbox[0])
+            & (lon <= bbox[2])
+            & (lat >= bbox[1])
+            & (lat <= bbox[3])
+        )
+        storm_ids = np.where(in_bbox.any(axis=1))[0]
+
+        geoms: list[LineString] = []
+        for storm_idx in storm_ids:
+            storm_lon = lon[storm_idx]
+            storm_lat = lat[storm_idx]
+            valid = np.isfinite(storm_lon) & np.isfinite(storm_lat)
+            coords = list(zip(storm_lon[valid], storm_lat[valid], strict=False))
+            if len(coords) >= 2:
+                geoms.append(LineString(coords))
+
+        tracks = gpd.GeoDataFrame({"geometry": geoms}, crs="EPSG:4326")
+    finally:
+        ds.close()
+
+    fig, ax = _setup_axes(country, "IBTrACS Tracks In Study Area")
+    if not tracks.empty:
+        tracks.plot(ax=ax, color="#4dac26", linewidth=1.0, alpha=0.8)
+    else:
+        ax.text(0.5, 0.5, "No IBTrACS track points in study-area bbox", transform=ax.transAxes, ha="center", va="center")
+
+    out = out_dir / "ibtracs_tracks.png"
+    _save(fig, out)
+    return out
+
+
+def _iso3_to_iso2(iso3: str) -> str | None:
+    country = pycountry.countries.get(alpha_3=iso3.upper())
+    return None if country is None else str(country.alpha_2)
+
+
+def _render_crop_summary(project_root: Path, iso3: str, out_dir: Path) -> Path | None:
+    crop_path = project_root / CROP_FILE
+    if not crop_path.exists():
+        return None
+
+    iso2 = _iso3_to_iso2(iso3)
+    if not iso2:
+        return None
+
+    crop_df = pd.read_excel(crop_path, sheet_name="Harvested area (ha)")
+    iso2_col = next((c for c in crop_df.columns if "ISO2" in str(c).upper()), crop_df.columns[0])
+    name_col = next((c for c in crop_df.columns if "COUNTRY NAME" in str(c).upper()), crop_df.columns[1])
+    crop_long = crop_df.melt(id_vars=[iso2_col, name_col], var_name="crop", value_name="harvested_ha")
+    crop_long = crop_long.rename(columns={iso2_col: "country_iso2", name_col: "country_name"})
+    crop_long["country_iso2"] = crop_long["country_iso2"].astype(str).str.strip()
+    crop_long["harvested_ha"] = pd.to_numeric(crop_long["harvested_ha"], errors="coerce").fillna(0)
+    country_rows = crop_long[(crop_long["country_iso2"] == iso2) & (crop_long["harvested_ha"] > 0)].copy()
+    if country_rows.empty:
+        return None
+
+    top_rows = country_rows.sort_values("harvested_ha", ascending=False).head(12)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.barh(top_rows["crop"][::-1], top_rows["harvested_ha"][::-1], color="#2c7fb8")
+    ax.set_title(f"Top Harvested Crops ({iso3})")
+    ax.set_xlabel("Harvested area (ha)")
+    ax.set_ylabel("Crop")
+    out = out_dir / "cropgrids_top_crops.png"
+    _save(fig, out)
+
+    summary_csv = out_dir / "cropgrids_country_summary.csv"
+    country_rows.sort_values("harvested_ha", ascending=False).to_csv(summary_csv, index=False)
+    return out
+
+
+def _render_spam(country: gpd.GeoDataFrame, project_root: Path, out_dir: Path) -> tuple[Path | None, Path | None]:
+    spam_dir = project_root / "spam_tifs"
+    tif_paths = [spam_dir / f"spam2010V2r0_global_H_{code}_A.tif" for code in SPAM_CODES]
+    tif_paths = [path for path in tif_paths if path.exists()]
+    if not tif_paths:
+        return None, None
+
+    total_array = None
+    dominant_index = None
+    dominant_value = None
+    transform = None
+
+    for idx, path in enumerate(tif_paths):
+        with rasterio.open(path) as src:
+            try:
+                clipped, current_transform = mask(src, country.geometry, crop=True, filled=True, nodata=0)
+            except ValueError:
+                continue
+        data = clipped[0].astype("float32")
+        data[data < 0] = 0
+        if total_array is None:
+            total_array = np.zeros_like(data, dtype="float32")
+            dominant_index = np.full(data.shape, -1, dtype="int16")
+            dominant_value = np.full(data.shape, -np.inf, dtype="float32")
+            transform = current_transform
+        total_array += data
+        better = data > dominant_value
+        dominant_value[better] = data[better]
+        dominant_index[better] = idx
+
+    if total_array is None or transform is None:
+        return None, None
+
+    total_masked = np.ma.masked_where(total_array <= 0, total_array)
+    total_out = None
+    if total_masked.count() > 0:
+        fig, ax = _setup_axes(country, "SPAM Total Harvested Area")
+        left = transform.c
+        top = transform.f
+        right = left + transform.a * total_masked.shape[1]
+        bottom = top + transform.e * total_masked.shape[0]
+        image = ax.imshow(total_masked, extent=[left, right, bottom, top], origin="upper", cmap="YlGn", alpha=0.85, zorder=1)
+        fig.colorbar(image, ax=ax, fraction=0.04, pad=0.02)
+        total_out = out_dir / "spam_total_harvested_area.png"
+        _save(fig, total_out)
+
+    dom_masked = np.ma.masked_where((dominant_index < 0) | (dominant_value <= 0), dominant_index)
+    dominant_out = None
+    if dom_masked.count() > 0:
+        fig, ax = _setup_axes(country, "SPAM Dominant Crop")
+        left = transform.c
+        top = transform.f
+        right = left + transform.a * dom_masked.shape[1]
+        bottom = top + transform.e * dom_masked.shape[0]
+        cmap = plt.get_cmap("tab10", len(tif_paths))
+        ax.imshow(dom_masked, extent=[left, right, bottom, top], origin="upper", cmap=cmap, alpha=0.8, zorder=1, vmin=0, vmax=max(len(tif_paths) - 1, 1))
+        labels = [SPAM_CODES[path.stem.split("_")[3]] for path in tif_paths]
+        handles = [Line2D([0], [0], marker="s", linestyle="", color=cmap(i), label=labels[i], markersize=8) for i in range(len(labels))]
+        ax.legend(handles=handles, loc="lower left", fontsize=8)
+        dominant_out = out_dir / "spam_dominant_crop.png"
+        _save(fig, dominant_out)
+
+    return total_out, dominant_out
+
+
+def _render_combined(country: gpd.GeoDataFrame, flood_png_source: Path | None, road_surface_path: Path | None, out_dir: Path) -> Path:
+    fig, ax = _setup_axes(country, "Combined Study-Area Preview")
+    if flood_png_source is not None and flood_png_source.exists():
+        # Re-render directly from the source raster instead of layering the PNG.
+        pass
+    if road_surface_path is not None and road_surface_path.exists():
+        roads = gpd.read_file(road_surface_path).to_crs("EPSG:4326").clip(country)
+        roads.plot(ax=ax, linewidth=0.4, color="#d95f02", alpha=0.7, zorder=5)
+    country.boundary.plot(ax=ax, color="black", linewidth=1.4, zorder=10)
+    out = out_dir / "all_together.png"
+    _save(fig, out)
+    return out
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config(args.config)
+    project_root = args.config.resolve().parents[1]
+    study_area = config.get("study_area", {})
+    iso3 = str(args.country_code or study_area.get("country_code", "")).upper()
+    if not iso3:
+        raise ValueError("study_area.country_code is required")
+
+    raw_root = project_root / "data" / "raw"
+    out_dir = project_root / "outputs" / "country_preview" / iso3
+    country, admin = _country_boundary(project_root, iso3)
+
+    created: dict[str, str] = {}
+    created["gadm"] = str(_render_gadm(country, admin, out_dir).relative_to(project_root))
+
+    road_surface_path = raw_root / "road_surface" / iso3 / f"heigit_{iso3.lower()}_roadsurface_lines.gpkg"
+    if road_surface_path.exists():
+        created["road_surface"] = str(_render_road_surface(country, road_surface_path, out_dir).relative_to(project_root))
+
+    chirps_path = raw_root / "chirps" / "global" / "monthly" / "chirps-v3.0.2024.01.tif"
+    if chirps_path.exists():
+        rendered = _render_single_raster(country, chirps_path, out_dir / "chirps_2024_01.png", "CHIRPS 2024-01", cmap="Blues")
+        if rendered is not None:
+            created["chirps"] = str(rendered.relative_to(project_root))
+
+    liquefaction_path = raw_root / "liquefaction" / "global" / "liquefaction_v1_deg.tif"
+    if liquefaction_path.exists():
+        rendered = _render_single_raster(country, liquefaction_path, out_dir / "liquefaction.png", "Liquefaction Susceptibility", cmap="magma")
+        if rendered is not None:
+            created["liquefaction"] = str(rendered.relative_to(project_root))
+
+    gem_path = raw_root / "gem" / "global" / "v2023_1_pga_475_rock_3min.tif"
+    if gem_path.exists():
+        rendered = _render_single_raster(country, gem_path, out_dir / "gem_pga_475y.png", "GEM Seismic Hazard PGA 475y", cmap="inferno")
+        if rendered is not None:
+            created["gem"] = str(rendered.relative_to(project_root))
+
+    for soil_path in sorted((raw_root / "soilgrids").glob("*.tif")):
+        key = f"soilgrids_{soil_path.stem}"
+        rendered = _render_single_raster(country, soil_path, out_dir / f"{soil_path.stem}.png", f"SoilGrids {soil_path.stem}", cmap="YlGn")
+        if rendered is not None:
+            created[key] = str(rendered.relative_to(project_root))
+
+    flood_path = _render_flood(country, raw_root, out_dir)
+    if flood_path is not None:
+        created["flood_rp100"] = str(flood_path.relative_to(project_root))
+
+    ibtracs_path = raw_root / "ibtracs" / "global" / "v04r01" / "netcdf" / "IBTrACS.since1980.v04r01.nc"
+    if ibtracs_path.exists():
+        created["ibtracs"] = str(_render_ibtracs(country, ibtracs_path, out_dir).relative_to(project_root))
+
+    crop_summary = _render_crop_summary(project_root, iso3, out_dir)
+    if crop_summary is not None:
+        created["cropgrids"] = str(crop_summary.relative_to(project_root))
+
+    spam_total, spam_dom = _render_spam(country, project_root, out_dir)
+    if spam_total is not None:
+        created["spam_total"] = str(spam_total.relative_to(project_root))
+    if spam_dom is not None:
+        created["spam_dominant"] = str(spam_dom.relative_to(project_root))
+
+    created["all_together"] = str(_render_combined(country, flood_path, road_surface_path if road_surface_path.exists() else None, out_dir).relative_to(project_root))
+
+    manifest_path = out_dir / "manifest.json"
+    manifest_path.write_text(json.dumps({"country_code": iso3, "outputs": created}, indent=2), encoding="utf-8")
+    print(f"Rendered {len(created)} preview files to {out_dir}")
+
+
+if __name__ == "__main__":
+    main()

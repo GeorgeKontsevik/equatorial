@@ -1,0 +1,13 @@
+cdsapi
+geopandas
+httpx
+jupyter
+matplotlib
+notebook
+openpyxl
+pandas
+pycountry
+pyyaml
+rasterio
+shapely
+xarray
