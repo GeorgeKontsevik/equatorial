@@ -25,6 +25,7 @@ bolivia-sample-task = "bolivia_sample_task_i:main"
 equatorial-fetch-data = "src.data.fetch:main"
 equatorial-inspect-data = "src.data.inspect:main"
 equatorial-render-country-previews = "src.data.render_country_previews:main"
+equatorial-road-scenarios = "src.data.run_road_monthly_scenarios:main"
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import zipfile
 from pathlib import Path
 
 import geopandas as gpd
@@ -37,12 +38,18 @@ SPAM_CODES = {
     "WHEA": "Wheat",
     "SORG": "Sorghum",
 }
+SPAM_CROP_NAMES = {name.lower() for name in SPAM_CODES.values()}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render PNG previews for all currently downloaded datasets in the active study area.")
     parser.add_argument("--config", type=Path, default=Path("config/datasets.yaml"), help="Path to the dataset configuration YAML file.")
     parser.add_argument("--country-code", type=str, default="", help="Optional ISO3 code to render a different country without changing config.")
+    parser.add_argument(
+        "--cropgrids-match-spam",
+        action="store_true",
+        help="When enabled, the CropGrids bar chart is filtered to products that are also present in the current SPAM crop set.",
+    )
     return parser.parse_args()
 
 
@@ -92,6 +99,75 @@ def _save(fig: plt.Figure, path: Path) -> None:
     plt.close(fig)
 
 
+def _format_resolution_label(res_x: float, res_y: float, latitude: float) -> str:
+    if abs(res_x) <= 0 or abs(res_y) <= 0:
+        return ""
+    km_per_deg_lat = 111.32
+    km_per_deg_lon = km_per_deg_lat * np.cos(np.deg2rad(latitude))
+    if km_per_deg_lon <= 0:
+        km_per_deg_lon = km_per_deg_lat
+    x_km = abs(res_x) * km_per_deg_lon
+    y_km = abs(res_y) * km_per_deg_lat
+    return f"cell size: {abs(res_x):.4f}° x {abs(res_y):.4f}° (~{x_km:.1f} x {y_km:.1f} km)"
+
+
+def _annotate_resolution(ax: plt.Axes, label: str) -> None:
+    if not label:
+        return
+    ax.text(
+        0.99,
+        0.01,
+        label,
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=8,
+        bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "alpha": 0.85, "edgecolor": "#666666"},
+        zorder=20,
+    )
+
+
+def _add_scale_bar(ax: plt.Axes, country: gpd.GeoDataFrame) -> None:
+    bounds = country.to_crs("EPSG:4326").total_bounds
+    minx, miny, maxx, maxy = [float(v) for v in bounds]
+    mid_lat = (miny + maxy) / 2
+    km_per_deg_lon = 111.32 * np.cos(np.deg2rad(mid_lat))
+    if km_per_deg_lon <= 0:
+        return
+
+    width_deg = maxx - minx
+    width_km = width_deg * km_per_deg_lon
+    if width_km <= 0:
+        return
+
+    candidates_km = [5, 10, 20, 25, 50, 100, 200]
+    target_km = width_km * 0.2
+    scale_km = candidates_km[0]
+    for candidate in candidates_km:
+        scale_km = candidate
+        if candidate >= target_km:
+            break
+
+    scale_deg = scale_km / km_per_deg_lon
+    x0 = minx + width_deg * 0.06
+    y0 = miny + (maxy - miny) * 0.05
+    x1 = x0 + scale_deg
+
+    ax.plot([x0, x1], [y0, y0], color="black", linewidth=3, solid_capstyle="butt", zorder=20)
+    ax.plot([x0, x0], [y0, y0 + (maxy - miny) * 0.01], color="black", linewidth=2, zorder=20)
+    ax.plot([x1, x1], [y0, y0 + (maxy - miny) * 0.01], color="black", linewidth=2, zorder=20)
+    ax.text(
+        (x0 + x1) / 2,
+        y0 + (maxy - miny) * 0.015,
+        f"{scale_km:g} km",
+        ha="center",
+        va="bottom",
+        fontsize=8,
+        bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.85, "edgecolor": "#666666"},
+        zorder=21,
+    )
+
+
 def _render_note(country: gpd.GeoDataFrame, out_path: Path, title: str, message: str) -> Path:
     fig, ax = _setup_axes(country, title)
     ax.text(0.5, 0.5, message, transform=ax.transAxes, ha="center", va="center")
@@ -103,6 +179,7 @@ def _render_gadm(country: gpd.GeoDataFrame, admin: gpd.GeoDataFrame, out_dir: Pa
     fig, ax = _setup_axes(country, "GADM Administrative Boundaries")
     admin.boundary.plot(ax=ax, color="#2c7fb8", linewidth=0.6, alpha=0.7)
     country.boundary.plot(ax=ax, color="black", linewidth=1.3)
+    _add_scale_bar(ax, country)
     out = out_dir / "gadm_boundaries.png"
     _save(fig, out)
     return out
@@ -139,6 +216,7 @@ def _render_road_surface(country: gpd.GeoDataFrame, path: Path, out_dir: Path) -
 
     legend_handles = [Line2D([0], [0], color=color, lw=2, label=group) for group, color in palette.items()]
     ax.legend(handles=legend_handles, loc="lower left")
+    _add_scale_bar(ax, country)
     out = out_dir / "road_surface.png"
     _save(fig, out)
     return out
@@ -146,6 +224,7 @@ def _render_road_surface(country: gpd.GeoDataFrame, path: Path, out_dir: Path) -
 
 def _render_single_raster(country: gpd.GeoDataFrame, path: Path, out_path: Path, title: str, cmap: str = "viridis") -> Path | None:
     with rasterio.open(path) as src:
+        resolution_label = _format_resolution_label(src.res[0], src.res[1], float(country.to_crs("EPSG:4326").geometry.unary_union.centroid.y))
         mask_shapes = country.geometry
         if src.crs:
             mask_shapes = country.to_crs(src.crs).geometry
@@ -168,6 +247,7 @@ def _render_single_raster(country: gpd.GeoDataFrame, path: Path, out_path: Path,
     else:
         ax.text(0.5, 0.5, "No raster values in study area", transform=ax.transAxes, ha="center", va="center")
 
+    _annotate_resolution(ax, resolution_label)
     _save(fig, out_path)
     return out_path
 
@@ -249,6 +329,7 @@ def _render_ibtracs(country: gpd.GeoDataFrame, path: Path, out_dir: Path) -> Pat
     else:
         ax.text(0.5, 0.5, "No IBTrACS track points in study-area bbox", transform=ax.transAxes, ha="center", va="center")
 
+    _add_scale_bar(ax, country)
     out = out_dir / "ibtracs_tracks.png"
     _save(fig, out)
     return out
@@ -259,7 +340,60 @@ def _iso3_to_iso2(iso3: str) -> str | None:
     return None if country is None else str(country.alpha_2)
 
 
-def _render_crop_summary(project_root: Path, iso3: str, out_dir: Path) -> Path | None:
+def _load_geonames_cities(project_root: Path, iso3: str, min_population: int = 500_000) -> gpd.GeoDataFrame | None:
+    iso2 = _iso3_to_iso2(iso3)
+    if not iso2:
+        return None
+
+    zip_path = project_root / "data" / "raw" / "cities" / iso2.upper() / f"{iso2.upper()}.zip"
+    if not zip_path.exists():
+        return None
+
+    columns = [
+        "geonameid",
+        "name",
+        "asciiname",
+        "alternatenames",
+        "latitude",
+        "longitude",
+        "feature_class",
+        "feature_code",
+        "country_code",
+        "cc2",
+        "admin1_code",
+        "admin2_code",
+        "admin3_code",
+        "admin4_code",
+        "population",
+        "elevation",
+        "dem",
+        "timezone",
+        "modification_date",
+    ]
+
+    with zipfile.ZipFile(zip_path) as archive:
+        preferred = f"{iso2.upper()}.txt"
+        member = next((name for name in archive.namelist() if Path(name).name.upper() == preferred.upper()), None)
+        if member is None:
+            member = next((name for name in archive.namelist() if name.lower().endswith(".txt") and "readme" not in Path(name).name.lower()), None)
+        if member is None:
+            return None
+        with archive.open(member) as handle:
+            frame = pd.read_csv(handle, sep="\t", header=None, names=columns, dtype={"country_code": "string"})
+
+    frame["population"] = pd.to_numeric(frame["population"], errors="coerce").fillna(0)
+    frame = frame[(frame["feature_class"] == "P") & (frame["population"] >= min_population)].copy()
+    if frame.empty:
+        return None
+
+    return gpd.GeoDataFrame(
+        frame[["name", "population"]].copy(),
+        geometry=gpd.points_from_xy(frame["longitude"], frame["latitude"]),
+        crs="EPSG:4326",
+    )
+
+
+def _render_crop_summary(project_root: Path, iso3: str, out_dir: Path, match_spam_only: bool = False) -> Path | None:
     crop_path = project_root / CROP_FILE
     if not crop_path.exists():
         return None
@@ -274,45 +408,76 @@ def _render_crop_summary(project_root: Path, iso3: str, out_dir: Path) -> Path |
     crop_long = crop_df.melt(id_vars=[iso2_col, name_col], var_name="crop", value_name="harvested_ha")
     crop_long = crop_long.rename(columns={iso2_col: "country_iso2", name_col: "country_name"})
     crop_long["country_iso2"] = crop_long["country_iso2"].astype(str).str.strip()
+    crop_long["crop"] = crop_long["crop"].astype(str).str.strip().str.lower()
     crop_long["harvested_ha"] = pd.to_numeric(crop_long["harvested_ha"], errors="coerce").fillna(0)
     country_rows = crop_long[(crop_long["country_iso2"] == iso2) & (crop_long["harvested_ha"] > 0)].copy()
     if country_rows.empty:
         return None
 
-    top_rows = country_rows.sort_values("harvested_ha", ascending=False).head(12)
+    spam_overlap = country_rows[country_rows["crop"].isin(SPAM_CROP_NAMES)].copy()
+    overlap_names = sorted(spam_overlap["crop"].unique().tolist())
+    missing_names = sorted(SPAM_CROP_NAMES - set(overlap_names))
+    print(
+        f"[cropgrids] {iso3} overlap_with_spam={len(overlap_names)} "
+        f"overlap_crops={overlap_names} missing_spam_crops={missing_names}",
+        flush=True,
+    )
+
+    chart_rows = country_rows.copy()
+    title = f"Top Harvested Crops ({iso3})"
+    out_name = "cropgrids_top_crops.png"
+
+    if match_spam_only:
+        chart_rows = spam_overlap.copy()
+        if chart_rows.empty:
+            return None
+        title = f"CropGrids Harvested Crops Covered By SPAM ({iso3})"
+        out_name = "cropgrids_spam_overlap.png"
+
+    top_rows = chart_rows.sort_values("harvested_ha", ascending=False).head(12 if not match_spam_only else len(chart_rows))
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.barh(top_rows["crop"][::-1], top_rows["harvested_ha"][::-1], color="#2c7fb8")
-    ax.set_title(f"Top Harvested Crops ({iso3})")
+    ax.set_title(title)
     ax.set_xlabel("Harvested area (ha)")
     ax.set_ylabel("Crop")
-    out = out_dir / "cropgrids_top_crops.png"
+    out = out_dir / out_name
     _save(fig, out)
 
     summary_csv = out_dir / "cropgrids_country_summary.csv"
     country_rows.sort_values("harvested_ha", ascending=False).to_csv(summary_csv, index=False)
+    overlap_csv = out_dir / "cropgrids_spam_overlap_summary.csv"
+    spam_overlap.sort_values("harvested_ha", ascending=False).to_csv(overlap_csv, index=False)
     return out
 
 
 def _render_spam(country: gpd.GeoDataFrame, project_root: Path, out_dir: Path) -> tuple[Path | None, Path | None]:
     spam_dir = project_root / "spam_tifs"
-    tif_paths = [spam_dir / f"spam2010V2r0_global_H_{code}_A.tif" for code in SPAM_CODES]
-    tif_paths = [path for path in tif_paths if path.exists()]
-    if not tif_paths:
+    all_tif_paths = [spam_dir / f"spam2010V2r0_global_H_{code}_A.tif" for code in SPAM_CODES]
+    all_tif_paths = [path for path in all_tif_paths if path.exists()]
+    if not all_tif_paths:
         return None, None
 
     total_array = None
     dominant_index = None
     dominant_value = None
     transform = None
+    active_tif_paths: list[Path] = []
+    resolution_label = ""
 
-    for idx, path in enumerate(tif_paths):
+    for path in all_tif_paths:
         with rasterio.open(path) as src:
+            if not resolution_label:
+                resolution_label = _format_resolution_label(src.res[0], src.res[1], float(country.to_crs("EPSG:4326").geometry.unary_union.centroid.y))
             try:
                 clipped, current_transform = mask(src, country.geometry, crop=True, filled=True, nodata=0)
             except ValueError:
                 continue
         data = clipped[0].astype("float32")
         data[data < 0] = 0
+        if float(data.sum()) <= 0:
+            continue
+        idx = len(active_tif_paths)
+        active_tif_paths.append(path)
         if total_array is None:
             total_array = np.zeros_like(data, dtype="float32")
             dominant_index = np.full(data.shape, -1, dtype="int16")
@@ -323,7 +488,7 @@ def _render_spam(country: gpd.GeoDataFrame, project_root: Path, out_dir: Path) -
         dominant_value[better] = data[better]
         dominant_index[better] = idx
 
-    if total_array is None or transform is None:
+    if total_array is None or transform is None or not active_tif_paths:
         return None, None
 
     total_masked = np.ma.masked_where(total_array <= 0, total_array)
@@ -336,6 +501,7 @@ def _render_spam(country: gpd.GeoDataFrame, project_root: Path, out_dir: Path) -
         bottom = top + transform.e * total_masked.shape[0]
         image = ax.imshow(total_masked, extent=[left, right, bottom, top], origin="upper", cmap="YlGn", alpha=0.85, zorder=1)
         fig.colorbar(image, ax=ax, fraction=0.04, pad=0.02)
+        _annotate_resolution(ax, resolution_label)
         total_out = out_dir / "spam_total_harvested_area.png"
         _save(fig, total_out)
 
@@ -347,26 +513,54 @@ def _render_spam(country: gpd.GeoDataFrame, project_root: Path, out_dir: Path) -
         top = transform.f
         right = left + transform.a * dom_masked.shape[1]
         bottom = top + transform.e * dom_masked.shape[0]
-        cmap = plt.get_cmap("tab10", len(tif_paths))
-        ax.imshow(dom_masked, extent=[left, right, bottom, top], origin="upper", cmap=cmap, alpha=0.8, zorder=1, vmin=0, vmax=max(len(tif_paths) - 1, 1))
-        labels = [SPAM_CODES[path.stem.split("_")[3]] for path in tif_paths]
+        cmap = plt.get_cmap("tab10", len(active_tif_paths))
+        ax.imshow(dom_masked, extent=[left, right, bottom, top], origin="upper", cmap=cmap, alpha=0.8, zorder=1, vmin=0, vmax=max(len(active_tif_paths) - 1, 1))
+        labels = [SPAM_CODES[path.stem.split("_")[3]] for path in active_tif_paths]
         handles = [Line2D([0], [0], marker="s", linestyle="", color=cmap(i), label=labels[i], markersize=8) for i in range(len(labels))]
         ax.legend(handles=handles, loc="lower left", fontsize=8)
+        _annotate_resolution(ax, resolution_label)
         dominant_out = out_dir / "spam_dominant_crop.png"
         _save(fig, dominant_out)
 
     return total_out, dominant_out
 
 
-def _render_combined(country: gpd.GeoDataFrame, flood_png_source: Path | None, road_surface_path: Path | None, out_dir: Path) -> Path:
-    fig, ax = _setup_axes(country, "Combined Study-Area Preview")
-    if flood_png_source is not None and flood_png_source.exists():
-        # Re-render directly from the source raster instead of layering the PNG.
-        pass
+def _render_combined(country: gpd.GeoDataFrame, road_surface_path: Path | None, cities: gpd.GeoDataFrame | None, out_dir: Path) -> Path:
+    fig, ax = _setup_axes(country, "Road Surface And Cities")
     if road_surface_path is not None and road_surface_path.exists():
         roads = gpd.read_file(road_surface_path).to_crs("EPSG:4326").clip(country)
-        roads.plot(ax=ax, linewidth=0.4, color="#d95f02", alpha=0.7, zorder=5)
+        roads["surface_group"] = _road_surface_class(roads)
+        palette = {"paved": "#1a9641", "unpaved": "#d7191c", "unknown": "#999999"}
+        for group, color in palette.items():
+            subset = roads.loc[roads["surface_group"] == group]
+            if not subset.empty:
+                subset.plot(ax=ax, linewidth=0.45, color=color, alpha=0.8, zorder=5)
+        road_handles = [Line2D([0], [0], color=color, lw=2, label=group) for group, color in palette.items()]
+    else:
+        road_handles = []
+
+    city_handles: list[Line2D] = []
+    if cities is not None and not cities.empty:
+        cities = cities.to_crs("EPSG:4326")
+        cities.plot(ax=ax, color="#2b83ba", markersize=180, marker="o", edgecolor="black", linewidth=0.9, zorder=12)
+        for row in cities.itertuples():
+            ax.text(
+                row.geometry.x,
+                row.geometry.y,
+                f" {row.name}",
+                fontsize=9,
+                va="center",
+                ha="left",
+                zorder=13,
+                bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "alpha": 0.9, "edgecolor": "#666666"},
+            )
+        city_handles = [Line2D([0], [0], marker="o", linestyle="", color="#2b83ba", label="cities", markersize=8)]
+
     country.boundary.plot(ax=ax, color="black", linewidth=1.4, zorder=10)
+    legend_handles = road_handles + city_handles
+    if legend_handles:
+        ax.legend(handles=legend_handles, loc="lower left", fontsize=8)
+    _add_scale_bar(ax, country)
     out = out_dir / "all_together.png"
     _save(fig, out)
     return out
@@ -424,7 +618,7 @@ def main() -> None:
     if ibtracs_path.exists():
         created["ibtracs"] = str(_render_ibtracs(country, ibtracs_path, out_dir).relative_to(project_root))
 
-    crop_summary = _render_crop_summary(project_root, iso3, out_dir)
+    crop_summary = _render_crop_summary(project_root, iso3, out_dir, match_spam_only=args.cropgrids_match_spam)
     if crop_summary is not None:
         created["cropgrids"] = str(crop_summary.relative_to(project_root))
 
@@ -434,7 +628,10 @@ def main() -> None:
     if spam_dom is not None:
         created["spam_dominant"] = str(spam_dom.relative_to(project_root))
 
-    created["all_together"] = str(_render_combined(country, flood_path, road_surface_path if road_surface_path.exists() else None, out_dir).relative_to(project_root))
+    cities = _load_geonames_cities(project_root, iso3)
+    created["all_together"] = str(
+        _render_combined(country, road_surface_path if road_surface_path.exists() else None, cities, out_dir).relative_to(project_root)
+    )
 
     manifest_path = out_dir / "manifest.json"
     manifest_path.write_text(json.dumps({"country_code": iso3, "outputs": created}, indent=2), encoding="utf-8")
