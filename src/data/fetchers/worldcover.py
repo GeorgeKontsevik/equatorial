@@ -65,6 +65,8 @@ What to do:
 
     target_dir = ensure_directory(context.raw_root / "worldcover" / str(year) / version / layer.lower())
     records: list[CatalogRecord] = []
+    missing_tiles: list[str] = []
+    failed_tiles: list[tuple[str, str]] = []
 
     for lat in lat_starts:
         for lon in lon_starts:
@@ -74,43 +76,11 @@ What to do:
             try:
                 local_path, reused = ensure_local_copy(source_url, target_dir / filename, context)
             except Exception as exc:  # pragma: no cover - runtime/provider dependent
-                instructions = f"""# Manual Steps For ESA WorldCover
-
-Automatic download of the required WorldCover tiles did not complete successfully.
-
-Dataset page:
-- https://esa-worldcover.org/en/data-access
-
-Requested configuration:
-- year: {year}
-- version: {version}
-- layer: {layer}
-- bbox: {bbox}
-
-Expected tile:
-- {filename}
-
-Suggested direct URL:
-- {source_url}
-
-What to do:
-1. Download the required tile manually from the ESA WorldCover public bucket, Zenodo package, or WorldCover download portal.
-2. Place it under `data/raw/worldcover/{year}/{version}/{layer.lower()}/`.
-3. Re-run the fetch and inspect commands.
-"""
-                return [
-                    manual_record(
-                        dataset_name="worldcover",
-                        source_url="https://esa-worldcover.org/en/data-access",
-                        context=context,
-                        instruction_text=instructions,
-                        license_or_access_note=WORLDCOVER_LICENSE_NOTE,
-                        spatial_resolution_raw="10 m global land cover map",
-                        temporal_resolution="annual snapshot",
-                        bbox=bbox,
-                        notes=f"WorldCover automatic download did not complete successfully: {exc}",
-                    ),
-                ]
+                if "404" in str(exc):
+                    missing_tiles.append(tile)
+                    continue
+                failed_tiles.append((tile, str(exc)))
+                continue
             records.append(
                 downloaded_record(
                     dataset_name="worldcover",
@@ -127,5 +97,54 @@ What to do:
                     ),
                 ),
             )
+
+    if records:
+        if missing_tiles and context.logger:
+            context.logger.warning("WorldCover tiles missing from public bucket and skipped: %s", ", ".join(sorted(missing_tiles)))
+        if failed_tiles and context.logger:
+            context.logger.warning(
+                "WorldCover tiles failed but other tiles were downloaded: %s",
+                "; ".join(f"{tile}: {message}" for tile, message in failed_tiles),
+            )
+        return records
+
+    if missing_tiles or failed_tiles:
+        details = []
+        if missing_tiles:
+            details.append(f"Missing tiles in public bucket: {', '.join(sorted(missing_tiles))}")
+        if failed_tiles:
+            details.append("Failed tile downloads: " + "; ".join(f"{tile}: {message}" for tile, message in failed_tiles))
+        instructions = f"""# Manual Steps For ESA WorldCover
+
+Automatic download of the required WorldCover tiles did not complete successfully.
+
+Dataset page:
+- https://esa-worldcover.org/en/data-access
+
+Requested configuration:
+- year: {year}
+- version: {version}
+- layer: {layer}
+- bbox: {bbox}
+
+What to do:
+1. Check the expected 3x3 degree tiles in the ESA WorldCover public bucket or download portal.
+2. Download the required tiles manually.
+3. Place them under `data/raw/worldcover/{year}/{version}/{layer.lower()}/`.
+4. Re-run the fetch and inspect commands.
+"""
+        return [
+            manual_record(
+                dataset_name="worldcover",
+                source_url="https://esa-worldcover.org/en/data-access",
+                context=context,
+                instruction_text=instructions,
+                license_or_access_note=WORLDCOVER_LICENSE_NOTE,
+                spatial_resolution_raw="10 m global land cover map",
+                temporal_resolution="annual snapshot",
+                bbox=bbox,
+                notes=" ".join(details),
+            ),
+        ]
 
     return records
