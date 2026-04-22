@@ -1,0 +1,85 @@
+crop_transport_loss:
+  version: 0.1
+  status: planning_only
+  note: >
+    Mock crop-specific direct-loss rates for future OD-based transport damage
+    analysis. These values are provisional placeholders only and do not drive
+    any current pipeline calculation yet.
+
+  methodology:
+    distance_unit_km: 10
+    loss_unit: fraction_of_product_lost_per_distance_unit
+    recommended_formula: linear_with_cap
+    cumulative_loss_cap_fraction: 0.25
+    surface_adjustment_rule: paved_is_three_times_lower_than_unpaved
+    application_rule: >
+      Apply crop-specific direct loss along OD distance under disrupted road
+      conditions using a conservative first-pass rule such as
+      `loss = min(cumulative_loss_cap_fraction, adjusted_rate * distance_km / distance_unit_km)`,
+      where `adjusted_rate = loss_fraction_per_10km` for `unpaved` and `unknown`
+      roads, and `adjusted_rate = loss_fraction_per_10km / 3` for `paved` roads.
+    output_intent:
+      - compute product-specific OD pairs under external road/climate disruptions
+      - estimate crop-specific direct loss for each OD pair
+      - summarize distributions at country level
+      - render country-level boxplots of OD loss outcomes by crop
+
+  road_surface_adjustment:
+    baseline_surface_for_listed_rates:
+      - unpaved
+      - unknown
+    paved_multiplier_relative_to_unpaved: 0.3333333333
+    notes:
+      - Listed crop loss rates are calibrated for `unpaved` and `unknown` roads.
+      - `unknown` is treated the same as `unpaved` for direct-loss calculations.
+      - `paved` roads use one third of the listed crop loss rate.
+
+  crop_loss_rate_per_10km:
+    tomato:
+      loss_fraction_per_10km: 0.004
+      perishability_class: very_high
+      note: High mock sensitivity; approximately 0.4 percent per 10 km.
+    banana:
+      loss_fraction_per_10km: 0.0025
+      perishability_class: high
+      note: Lower than tomato but still strongly perishable.
+    soybean:
+      loss_fraction_per_10km: 0.00015
+      perishability_class: low
+      note: Dry commodity; very small direct-loss placeholder.
+    maize:
+      loss_fraction_per_10km: 0.0002
+      perishability_class: low
+      note: Dry/storable commodity; small mock direct loss.
+    rice:
+      loss_fraction_per_10km: 0.00015
+      perishability_class: low
+      note: Dry/storable commodity; very small mock direct loss.
+    sugarcane:
+      loss_fraction_per_10km: 0.001
+      perishability_class: medium
+      note: Bulky fresh cane; quality and mass losses can matter with delay.
+    sunflower:
+      loss_fraction_per_10km: 0.00015
+      perishability_class: low
+      note: Dry commodity placeholder.
+    cotton:
+      loss_fraction_per_10km: 0.00005
+      perishability_class: very_low
+      note: Included only for completeness; not a food-loss proxy.
+    bean:
+      loss_fraction_per_10km: 0.0003
+      perishability_class: low
+      note: Slightly above cereals as a conservative mock placeholder.
+    potato:
+      loss_fraction_per_10km: 0.0008
+      perishability_class: medium
+      note: Bruising-sensitive bulk crop; moderate mock direct loss.
+    wheat:
+      loss_fraction_per_10km: 0.00005
+      perishability_class: very_low
+      note: Dry commodity placeholder.
+    sorghum:
+      loss_fraction_per_10km: 0.00005
+      perishability_class: very_low
+      note: Dry commodity placeholder.

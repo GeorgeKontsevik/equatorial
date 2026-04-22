@@ -1,0 +1,131 @@
+road_climate_damage:
+  version: 0.1
+  status: planning_only
+  note: >
+    This file stores the current mock configuration for a future road-climate
+    damage overlay. It is a configuration contract only for now and does not
+    change the current routing code by itself.
+
+  road_selection:
+    include_surface_groups:
+      - unpaved
+      - unknown
+    notes:
+      - Only road segments with surface_group `unpaved` or `unknown` are in scope.
+      - For damage handling, `unknown` is treated the same as `unpaved` for now.
+      - Keep the original surface labels unchanged in the data outputs.
+
+  severity_effects:
+    minor:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.05
+      closure_duration_days: 0
+      note: Road remains traversable; apply a 5 percent slowdown.
+    moderate:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.15
+      closure_duration_days: 0
+      note: Road remains traversable; apply a 15 percent slowdown.
+    severe:
+      effect_type: temporary_closure
+      speed_penalty_fraction: 0.0
+      closure_duration_days: 7
+      note: Temporary road outage; default mock duration is 1 week.
+    catastrophic:
+      effect_type: permanent_closure
+      speed_penalty_fraction: 0.0
+      closure_duration_days: 90
+      note: Long outage; default mock duration is 3 months.
+
+  indicators:
+    landslide:
+      parameter: rainfall
+      units: mm_per_24h
+      source_layers:
+        - landslide_susceptibility
+        - chirps
+        - era5
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+
+    extreme_rainfall:
+      parameter: rainfall
+      units: mm_per_day
+      source_layers:
+        - chirps
+        - era5
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+
+    flood_depth:
+      parameter: flood_depth
+      units: m
+      source_layers:
+        - flood
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+
+    extreme_heat:
+      parameter: skin_temperature
+      units: celsius
+      source_layers:
+        - era5
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+
+    drought:
+      parameter: spi
+      units: index
+      source_layers:
+        - era5_spi
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+
+    dust_storms:
+      parameter: pm10_or_pm25
+      units: ug_per_m3
+      source_layers:
+        - cams
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+
+    windstorms:
+      parameter: wind_speed
+      units: m_per_s
+      source_layers:
+        - era5
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+
+    urban_heat:
+      parameter: built_up_or_impervious_proxy
+      units: share_or_fraction
+      source_layers:
+        - worldcover
+        - era5
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null

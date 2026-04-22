@@ -116,6 +116,14 @@ The preview PNGs are written to:
 - `outputs/country_preview/<ISO3>/`
 - plus a small `manifest.json` in the same folder
 
+Planning-only road-climate damage configuration now also lives in:
+
+- `config/road_climate_damage.yaml`
+- `config/crop_transport_loss.yaml`
+
+That file is intended as a future configuration contract for climate-driven road effects.
+It does not change the current routing code yet.
+
 ## Change Study Area
 
 The config now supports a single top-level `study_area` block. In the common case, changing territory means editing only this section in [datasets.yaml](/Users/gk/Code/super-duper-disser/equatorial/config/datasets.yaml:1):
@@ -213,6 +221,68 @@ Scope boundary for this next step:
 - this is an `OD extraction / assignment` step first
 - no route calculation is part of this step yet
 - no change to the current scenario code is implied by this note alone
+
+## Planned Road-Climate Damage Overlay
+
+The current planning assumption for climate-driven road damage is intentionally simple and
+configuration-first.
+
+Road selection rule:
+
+- only roads with surface group `unpaved` or `unknown` are in scope
+- `unknown` is treated the same as `unpaved` for damage handling
+- the original labels stay unchanged in the underlying data
+
+Mock severity-to-impact mapping currently stored in [road_climate_damage.yaml](/Users/gk/Code/super-duper-disser/equatorial/config/road_climate_damage.yaml:1):
+
+- `Minor`: road stays traversable, apply `5%` speed reduction
+- `Moderate`: road stays traversable, apply `15%` speed reduction
+- `Severe`: temporary road outage for `7 days`
+- `Catastrophic`: long road outage for `90 days`
+
+Indicator thresholds are still placeholders in that config:
+
+- `Landslide`
+- `Extreme Rainfall`
+- `Flood Depth`
+- `Extreme Heat`
+- `Drought`
+- `Dust Storms`
+- `Windstorms`
+- `Urban Heat`
+
+Those threshold values are intentionally left editable and will be filled or revised later.
+
+## Planned Crop-Specific Transport Loss Layer
+
+The current planning assumption is that different crops experience different direct-loss rates
+for the same disrupted road distance.
+
+This mock configuration now lives in [crop_transport_loss.yaml](/Users/gk/Code/super-duper-disser/equatorial/config/crop_transport_loss.yaml:1).
+
+Current placeholder examples:
+
+- `tomato`: about `0.4%` loss per `10 km`
+- `banana`: about `0.25%` loss per `10 km`
+- dry/storable crops such as `wheat`, `sorghum`, `rice`, `soybean`: much smaller mock losses
+- bulk but bruise-sensitive crops such as `potato` and `sugarcane`: intermediate mock losses
+
+Recommended first-pass application rule:
+
+- use a simple linear loss rule with a cap
+- `loss = min(cap, adjusted_rate * distance_km / 10)`
+- current mock `cap = 25%` total direct loss per OD flow
+- listed crop rates are for `unpaved` and `unknown` roads
+- for `paved` roads, use `1/3` of the listed crop loss rate
+
+Planned analytical use:
+
+- compute crop-specific `OD` pairs under externally changed road conditions
+- apply crop-specific direct-loss rates to each product separately
+- summarize the resulting OD-loss distributions at country level
+- render country-level boxplots of product loss distributions
+
+These values are intentionally provisional and are expected to be revised later.
 
 ## Article Data vs Current Collection
 
