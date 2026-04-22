@@ -36,8 +36,11 @@ data/
     coastaldem/
     soilgrids/
     ibtracs/
+    cams/
     gem/
+    landslide_susceptibility/
     flopros/
+    worldcover/
   metadata/
     catalog.csv
     catalog.json
@@ -142,13 +145,36 @@ This first pass currently aims to cover:
 - `road_surface`: country-level HeiGIT road-surface downloads (`paved / unpaved`) with manual fallback
 - `chirps`: monthly global CHIRPS GeoTIFFs
 - `era5`: ERA5 / ERA5-Land via CDS API, with manual fallback when credentials or licence acceptance are missing
+- `era5_spi`: ready-made global monthly SPI GeoTIFFs derived from ERA5 via Drought.gov / NOAA NIDIS
+- `landslide_susceptibility`: NASA global landslide susceptibility map clip for the active study area
 - `flood`: JRC / Copernicus global flood hazard tiles by bbox
 - `coastaldem`: manual request workflow with catalog placeholder
 - `soilgrids`: WCS subset attempt with manual fallback
 - `ibtracs`: NOAA IBTrACS CSV / NetCDF
+- `cams`: CAMS global reanalysis via the ADS API, with manual fallback when credentials are missing
 - `gem`: global seismic hazard raster from the GEM open version on Zenodo
 - `liquefaction`: global liquefaction susceptibility raster from Zenodo
 - `flopros`: official FLOPROS supplement archive (protection-standard metadata, not a raster hazard layer)
+- `worldcover`: ESA WorldCover 10 m land-cover tiles intersecting the active study area
+
+## Critical Fixes
+
+The current transport-climate threshold table includes several indicators defined at daily or hourly scale
+for example intense rainfall in `mm/day`, strong winds in `m/s`, and heat stress thresholds tied to hot surface conditions.
+
+For first-pass collection, the pipeline currently keeps some climate products in monthly form:
+
+- `CHIRPS` currently configured as monthly
+- `ERA5-Land` currently configured as monthly means
+- `CAMS` currently configured as monthly means
+
+This is a temporary fallback for data collection continuity, not a methodologically final setup.
+
+Critical fix still required:
+
+- switch rainfall thresholds to daily/event-scale precipitation inputs
+- switch heat and wind thresholds to daily/hourly values, ideally including maxima where appropriate
+- treat monthly layers only as broad contextual indicators until the finer temporal products are wired in
 
 ## Article Data vs Current Collection
 

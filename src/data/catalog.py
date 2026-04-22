@@ -130,13 +130,17 @@ def build_inventory_report(frame: pd.DataFrame) -> str:
         "road_surface": "Recommended paved/unpaved road-surface source: HeiGIT global road-surface dataset on HDX (Mapillary + OSM matching).",
         "chirps": "Recommended replacement for historical precipitation forcing: CHIRPS v3 precipitation rasters.",
         "era5": "Recommended replacement for older climate reanalysis inputs: ERA5-Land or ERA5 via the Copernicus CDS API.",
+        "era5_spi": "Recommended ready-made drought indicator for SPI-based thresholds: Drought.gov / NOAA NIDIS global ERA5 SPI GeoTIFFs.",
+        "landslide_susceptibility": "Recommended first-pass rainfall-triggered landslide susceptibility context: NASA global landslide susceptibility map.",
         "flood": "Recommended replacement for coarse flood proxies: JRC/Copernicus river flood hazard maps; GloFAS only as fallback.",
         "coastaldem": "Recommended coastal screening elevation source when access is granted: CoastalDEM.",
         "soilgrids": "Recommended replacement for coarse soil covariates: SoilGrids 250 m layers.",
         "ibtracs": "Recommended tropical cyclone track archive: NOAA IBTrACS v04r01.",
+        "cams": "Recommended atmospheric composition source for PM, dust, and aerosol context: CAMS global reanalysis.",
         "gem": "Recommended operational global seismic hazard source in this project: GEM open seismic hazard raster from Zenodo.",
         "liquefaction": "Recommended global liquefaction susceptibility source: Zhu model family raster from Zenodo.",
         "flopros": "FLOPROS is a protection-standard parameter dataset, not a raster hazard layer.",
+        "worldcover": "Recommended high-resolution land-cover source for built-up / impervious proxy context: ESA WorldCover 10 m.",
     }
 
     lines = [

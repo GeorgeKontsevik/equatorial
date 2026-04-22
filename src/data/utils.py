@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import tarfile
 import time
 import zipfile
@@ -53,6 +54,24 @@ def ensure_directory(path: Path) -> Path:
 
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def load_project_env(project_root: Path) -> None:
+    """Load simple KEY=VALUE pairs from a project-local `.env` file if present."""
+
+    env_path = project_root / ".env"
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def configure_logging(logs_root: Path, logger_name: str = "equatorial.data") -> logging.Logger:

@@ -73,7 +73,16 @@ def _ensure_dataset_defaults(config: dict[str, Any], study_area: dict[str, Any])
     if "osm" in datasets and geofabrik_id:
         datasets["osm"].setdefault("geofabrik_ids", [geofabrik_id])
 
-    for dataset_name in ["chirps", "era5", "flood", "coastaldem", "soilgrids", "road_surface"]:
+    for dataset_name in [
+        "chirps",
+        "era5",
+        "flood",
+        "coastaldem",
+        "soilgrids",
+        "road_surface",
+        "landslide_susceptibility",
+        "worldcover",
+    ]:
         dataset_cfg = datasets.get(dataset_name)
         if dataset_cfg is not None and bbox is not None:
             dataset_cfg.setdefault("bbox", bbox)
@@ -86,6 +95,10 @@ def _ensure_dataset_defaults(config: dict[str, Any], study_area: dict[str, Any])
             request["area"] = [float(value) for value in request["area"]]
         if slug:
             era5_cfg.setdefault("target_filename", f"era5-land-monthly-{slug}.nc")
+
+    landslide_cfg = datasets.get("landslide_susceptibility")
+    if landslide_cfg is not None and slug:
+        landslide_cfg.setdefault("target_slug", slug)
 
     road_surface_cfg = datasets.get("road_surface")
     if road_surface_cfg is not None and country_code:
@@ -114,6 +127,11 @@ def apply_study_area_override(config: dict[str, Any], country_code: str) -> dict
 
     study_area = overridden.setdefault("study_area", {})
     study_area["country_code"] = iso3
+    # Do not silently reuse bbox/geofabrik metadata from a different country.
+    # One-off ISO3 overrides are safe for country-keyed caches such as GADM and road_surface,
+    # but bbox-driven datasets must be reconfigured explicitly for the new territory.
+    study_area.pop("bbox", None)
+    study_area.pop("geofabrik_id", None)
 
     country = pycountry.countries.get(alpha_3=iso3)
     if country is not None:

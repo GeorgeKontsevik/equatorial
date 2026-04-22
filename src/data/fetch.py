@@ -8,7 +8,7 @@ from pathlib import Path
 from src.data.catalog import CatalogRecord, load_catalog, summarize_status, upsert_records, write_catalog, write_inventory_report
 from src.data.config import load_config
 from src.data.fetchers import FETCHER_REGISTRY
-from src.data.utils import FetchContext, bbox_to_string, configure_logging, ensure_directory, utc_now_iso
+from src.data.utils import FetchContext, bbox_to_string, configure_logging, ensure_directory, load_project_env, utc_now_iso
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,8 +58,9 @@ def skipped_record(dataset_name: str, dataset_cfg: dict) -> CatalogRecord:
 
 def main() -> None:
     args = parse_args()
-    config = load_config(args.config, country_code_override=args.country_code)
     project_root = args.config.resolve().parents[1]
+    load_project_env(project_root)
+    config = load_config(args.config, country_code_override=args.country_code)
     context = build_context(project_root, config)
 
     catalog_csv = context.metadata_root / "catalog.csv"

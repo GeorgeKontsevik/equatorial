@@ -34,6 +34,9 @@ datasets:
     region: global
     years: [2024]
     months: [1]
+    # CRITICAL FIX:
+    # The road-climate threshold table uses daily/event-scale rainfall thresholds.
+    # This monthly configuration is only a temporary fallback for first-pass collection.
 
   era5:
     enabled: true
@@ -45,14 +48,36 @@ datasets:
       product_type: monthly_averaged_reanalysis
       variable:
         - 2m_temperature
+        - skin_temperature
         - total_precipitation
         - volumetric_soil_water_layer_1
+        - 10m_u_component_of_wind
+        - 10m_v_component_of_wind
       year: ["2024"]
       month: ["01", "02", "03"]
       time: "00:00"
       data_format: netcdf
       download_format: unarchived
       area: ["{north}", "{west}", "{south}", "{east}"]
+    # CRITICAL FIX:
+    # Heat and wind thresholds from the current indicator table ultimately require
+    # daily/hourly values (and often maxima), not monthly means. Keep this monthly
+    # request only as a temporary collection fallback.
+
+  era5_spi:
+    enabled: true
+    source_url: https://www.drought.gov/data-maps-tools/era5-drought-indices
+    spatial_resolution_raw: global ~30 km SPI GeoTIFF derived from ERA5 / Climate Engine
+    temporal_resolution: monthly SPI
+    timescales_months: [1, 2, 3, 6, 9, 12]
+
+  landslide_susceptibility:
+    enabled: true
+    source_url: https://gis.earthdata.nasa.gov/gis05/rest/services/Landslides/Global_Landslide_Susceptibility/ImageServer
+    spatial_resolution_raw: global landslide susceptibility image service at approximately 30 arc-seconds
+    temporal_resolution: static susceptibility ranking
+    export_resolution_deg: 0.008333333333333333
+    target_slug: "{slug}"
 
   flood:
     enabled: true
@@ -75,6 +100,27 @@ datasets:
     subsets: [ALL, since1980]
     download_name_mapping: true
 
+  cams:
+    enabled: true
+    dataset_id: cams-global-reanalysis-eac4-monthly
+    source_url: https://ads.atmosphere.copernicus.eu/datasets/cams-global-reanalysis-eac4-monthly
+    spatial_resolution_raw: 0.75 degree global atmospheric composition grid
+    temporal_resolution: monthly
+    target_filename: cams-eac4-monthly-{slug}-2024-q1.zip
+    request:
+      year: ["2024"]
+      month: ["01", "02", "03"]
+      variable:
+        - particulate_matter_2.5um
+        - particulate_matter_10um
+        - dust_aerosol_optical_depth_550nm
+      format: netcdf
+    # CRITICAL FIX:
+    # Dust / Harmattan thresholds are defined on event-scale PM and visibility.
+    # Monthly CAMS means are a temporary fallback for first-pass coverage only.
+    # The ADS monthly package currently arrives as a ZIP archive with
+    # `data_allhours_sfc.nc` and `data_byhour_sfc.nc` inside.
+
   gem:
     enabled: true
     source_url: https://zenodo.org/records/8409647/files/GEM-GSHM_PGA-475y-rock_v2023.zip?download=1
@@ -89,3 +135,12 @@ datasets:
     enabled: true
     source_url: https://nhess.copernicus.org/articles/16/1049/2016/nhess-16-1049-2016-supplement.zip
     spatial_resolution_raw: protection-standard metadata from the official FLOPROS supplement (shapefile and workbook)
+
+  worldcover:
+    enabled: true
+    source_url: https://esa-worldcover.org/en/data-access
+    year: 2021
+    version: v200
+    layer: Map
+    spatial_resolution_raw: 10 m global land cover map
+    temporal_resolution: annual snapshot
