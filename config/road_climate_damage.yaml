@@ -15,6 +15,22 @@ road_climate_damage:
       - For damage handling, `unknown` is treated the same as `unpaved` for now.
       - Keep the original surface labels unchanged in the data outputs.
 
+  implementation_scope:
+    strategy: add_one_indicator_at_a_time
+    active_indicators:
+      - flood_depth
+    deferred_indicators:
+      - landslide
+      - extreme_rainfall
+      - extreme_heat
+      - drought
+      - dust_storms
+      - windstorms
+      - urban_heat
+    note: >
+      First implementation pass should use only one indicator. Additional
+      indicators are intentionally deferred until the first one is stable.
+
   severity_effects:
     minor:
       effect_type: speed_penalty
@@ -64,17 +80,23 @@ road_climate_damage:
         catastrophic: null
 
     flood_depth:
+      status: active_first_pass
       parameter: flood_depth
       units: m
       source_layers:
         - flood
+      weekly_aggregation: static_depth_overlay
       thresholds:
-        minor: null
-        moderate: null
-        severe: null
-        catastrophic: null
+        minor: 0.1
+        moderate: 0.2
+        severe: 0.3
+        catastrophic: 0.5
+      notes:
+        - "0.3 m is the first mock closure threshold for small-vehicle impassability."
+        - "0.5 m is the first mock catastrophic threshold for road unusability."
 
     extreme_heat:
+      status: deferred
       parameter: skin_temperature
       units: celsius
       source_layers:
@@ -86,6 +108,7 @@ road_climate_damage:
         catastrophic: null
 
     drought:
+      status: deferred
       parameter: spi
       units: index
       source_layers:
@@ -97,6 +120,7 @@ road_climate_damage:
         catastrophic: null
 
     dust_storms:
+      status: deferred
       parameter: pm10_or_pm25
       units: ug_per_m3
       source_layers:
@@ -108,6 +132,7 @@ road_climate_damage:
         catastrophic: null
 
     windstorms:
+      status: deferred
       parameter: wind_speed
       units: m_per_s
       source_layers:
@@ -119,6 +144,7 @@ road_climate_damage:
         catastrophic: null
 
     urban_heat:
+      status: deferred
       parameter: built_up_or_impervious_proxy
       units: share_or_fraction
       source_layers:

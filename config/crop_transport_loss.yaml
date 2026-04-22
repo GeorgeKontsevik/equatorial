@@ -30,9 +30,9 @@ crop_transport_loss:
       - unknown
     paved_multiplier_relative_to_unpaved: 0.3333333333
     notes:
-      - Listed crop loss rates are calibrated for `unpaved` and `unknown` roads.
-      - `unknown` is treated the same as `unpaved` for direct-loss calculations.
-      - `paved` roads use one third of the listed crop loss rate.
+      - "Listed crop loss rates are calibrated for `unpaved` and `unknown` roads."
+      - "`unknown` is treated the same as `unpaved` for direct-loss calculations."
+      - "`paved` roads use one third of the listed crop loss rate."
 
   crop_loss_rate_per_10km:
     tomato:

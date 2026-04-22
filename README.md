@@ -240,18 +240,28 @@ Mock severity-to-impact mapping currently stored in [road_climate_damage.yaml](/
 - `Severe`: temporary road outage for `7 days`
 - `Catastrophic`: long road outage for `90 days`
 
-Indicator thresholds are still placeholders in that config:
+Incremental implementation rule:
+
+- start with one indicator only
+- current first-pass active indicator: `Flood Depth`
+- keep all other indicators deferred until the first one is stable
+
+Current first-pass `Flood Depth` mock thresholds:
+
+- `Minor`: `0.1 m`
+- `Moderate`: `0.2 m`
+- `Severe`: `0.3 m`
+- `Catastrophic`: `0.5 m`
+
+Deferred indicators still left editable in that config:
 
 - `Landslide`
 - `Extreme Rainfall`
-- `Flood Depth`
 - `Extreme Heat`
 - `Drought`
 - `Dust Storms`
 - `Windstorms`
 - `Urban Heat`
-
-Those threshold values are intentionally left editable and will be filled or revised later.
 
 ## Planned Crop-Specific Transport Loss Layer
 
@@ -283,6 +293,31 @@ Planned analytical use:
 - render country-level boxplots of product loss distributions
 
 These values are intentionally provisional and are expected to be revised later.
+
+## Current Flood OD Pilot
+
+There is now a first-pass pilot script for a crop-specific road-disruption experiment:
+
+- [run_crop_flood_od_experiment.py](/Users/gk/Code/super-duper-disser/equatorial/src/data/run_crop_flood_od_experiment.py:1)
+- current test country: `GAB`
+- current first-pass crop example: `MAIZ`
+- origins: random sample from crop-specific `SPAM production p95` cells
+- destinations: nearest already-collected city layer used in the preview workflow
+- disruption source: current `Flood Depth` road overlay only
+
+Important scope note:
+
+- the current pilot is a `single disrupted snapshot`
+- it compares `baseline` versus one `flood` graph state
+- it is **not** a weekly rollout yet
+- the earlier weekly plan still stands as the next proper temporal extension once the single-snapshot OD logic is stable
+
+Operational notes for the pilot:
+
+- heavy steps now log progress and use `tqdm`
+- prepared roads are cached under `outputs/cache/prepared_roads/<ISO3>/`
+- OD experiment outputs are cached under `outputs/crop_flood_od_experiments/<ISO3>/<CROP>/<run_slug>/`
+- reruns with the same parameter combination reuse cached results unless `--no-cache` is passed
 
 ## Article Data vs Current Collection
 
