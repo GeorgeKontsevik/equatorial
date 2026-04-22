@@ -176,6 +176,27 @@ Critical fix still required:
 - switch heat and wind thresholds to daily/hourly values, ideally including maxima where appropriate
 - treat monthly layers only as broad contextual indicators until the finer temporal products are wired in
 
+Operational resolution summary for current sources:
+
+| Source | Spatial resolution | Temporal resolution in current pipeline | Can replace monthly with daily/hourly? | Recommended target cadence |
+| --- | --- | --- | --- | --- |
+| `SPAM harvested area` | `0.083333°` (`5 arc-min`), about `~9 x 9 km` | static (`2010`) | `No` | keep static |
+| `SPAM production` | `0.083333°` (`5 arc-min`), about `~9 x 9 km` | static (`2010`) | `No` | keep static |
+| `CHIRPS` | `0.05°`, about `~5.5 x 5.5 km` | monthly | `Yes` | daily |
+| `ERA5-Land` | `0.1°`, about `~11 x 11 km` | monthly | `Yes` | daily or hourly |
+| `ERA5 SPI` | about `~0.25°`, about `~28-31 km` | monthly | `No` for a simple daily swap; this is already a derived monthly drought index | keep monthly SPI, or replace with daily precipitation / soil-moisture workflows |
+| `CAMS` | about `~0.75°`, about `~80 km` | monthly | `Partly` | daily or sub-daily when product access supports it |
+| `Flood hazard` | `3 arc-second`, about `~90 m` | static return-period layer | `No` | keep static |
+| `Landslide susceptibility` | about `30 arc-second`, about `~1 km` | static | `No` | keep static |
+| `WorldCover` | `10 m` | static (`2021`) | `No` | keep static |
+| `SoilGrids` | about `250 m` | static | `No` | keep static |
+| `GEM` | about `0.05°`, about `~5-6 km` | static | `No` | keep static |
+| `Liquefaction` | about `0.0108° x 0.0105°`, about `~1.1 km` | static | `No` | keep static |
+| `IBTrACS` | track points / lines, not a raster grid | event time series | `Not applicable` | keep event/time-series form |
+| `GADM` | vector polygons | static versioned boundaries | `No` | keep static |
+| `road_surface` | vector lines | static snapshot | `No` | keep static |
+| `GeoNames cities` | point layer | static snapshot | `No` | keep static |
+
 ## Agreed Next Scenario Step
 
 The next agreed SPAM-based routing experiment is intentionally deferred until the routing setup is ready.
