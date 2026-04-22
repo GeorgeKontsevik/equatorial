@@ -176,6 +176,19 @@ Critical fix still required:
 - switch heat and wind thresholds to daily/hourly values, ideally including maxima where appropriate
 - treat monthly layers only as broad contextual indicators until the finer temporal products are wired in
 
+## Agreed Next Scenario Step
+
+The next agreed SPAM-based routing experiment is intentionally deferred until the routing setup is ready.
+
+Planned rule for the first pass:
+
+- use `SPAM production` cells as agricultural origins
+- keep them separated by crop, not only as one aggregated surface
+- prioritize high-production cells using crop-specific upper quantiles such as `p95`
+- route each selected origin to the nearest city node as a simple first-pass destination proxy
+
+This note is a future-work decision only. It does not change the current pipeline behavior yet.
+
 ## Article Data vs Current Collection
 
 Comparison between data described in the Nature Communications article (`10.1038/s41467-019-10442-3`) and the current `equatorial` first-pass collection.

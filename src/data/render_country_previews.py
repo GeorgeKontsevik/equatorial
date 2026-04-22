@@ -46,6 +46,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=Path("config/datasets.yaml"), help="Path to the dataset configuration YAML file.")
     parser.add_argument("--country-code", type=str, default="", help="Optional ISO3 code to render a different country without changing config.")
     parser.add_argument(
+        "--city-pop-threshold",
+        type=int,
+        default=50_000,
+        help="Minimum population for city points drawn on preview maps.",
+    )
+    parser.add_argument(
         "--cropgrids-match-spam",
         action="store_true",
         help="When enabled, the CropGrids bar chart is filtered to products that are also present in the current SPAM crop set.",
@@ -220,6 +226,27 @@ def _render_road_surface(country: gpd.GeoDataFrame, path: Path, out_dir: Path) -
     out = out_dir / "road_surface.png"
     _save(fig, out)
     return out
+
+
+def _plot_cities(ax: plt.Axes, cities: gpd.GeoDataFrame | None, label_cities: bool = True) -> list[Line2D]:
+    if cities is None or cities.empty:
+        return []
+
+    cities = cities.to_crs("EPSG:4326")
+    cities.plot(ax=ax, color="#2b83ba", markersize=85, marker="o", edgecolor="black", linewidth=0.7, zorder=12)
+    if label_cities:
+        for row in cities.itertuples():
+            ax.text(
+                row.geometry.x,
+                row.geometry.y,
+                f" {row.name}",
+                fontsize=8,
+                va="center",
+                ha="left",
+                zorder=13,
+                bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "alpha": 0.88, "edgecolor": "#666666"},
+            )
+    return [Line2D([0], [0], marker="o", linestyle="", color="#2b83ba", label="cities", markersize=8)]
 
 
 def _render_single_raster(country: gpd.GeoDataFrame, path: Path, out_path: Path, title: str, cmap: str = "viridis") -> Path | None:
@@ -450,12 +477,148 @@ def _render_crop_summary(project_root: Path, iso3: str, out_dir: Path, match_spa
     return out
 
 
-def _render_spam(country: gpd.GeoDataFrame, project_root: Path, out_dir: Path) -> tuple[Path | None, Path | None]:
+def _render_spam_total_metric(
+    country: gpd.GeoDataFrame,
+    tif_paths: list[Path],
+    out_dir: Path,
+    title: str,
+    out_name: str,
+    cmap: str,
+    cities: gpd.GeoDataFrame | None = None,
+) -> Path | None:
+    all_tif_paths = [path for path in tif_paths if path.exists()]
+    if not all_tif_paths:
+        return None
+
+    total_array = None
+    transform = None
+    resolution_label = ""
+
+    for path in all_tif_paths:
+        with rasterio.open(path) as src:
+            if not resolution_label:
+                resolution_label = _format_resolution_label(
+                    src.res[0],
+                    src.res[1],
+                    float(country.to_crs("EPSG:4326").geometry.unary_union.centroid.y),
+                )
+            try:
+                clipped, current_transform = mask(src, country.geometry, crop=True, filled=True, nodata=0)
+            except ValueError:
+                continue
+        data = clipped[0].astype("float32")
+        data[data < 0] = 0
+        if float(data.sum()) <= 0:
+            continue
+        if total_array is None:
+            total_array = np.zeros_like(data, dtype="float32")
+            transform = current_transform
+        total_array += data
+
+    if total_array is None or transform is None:
+        return None
+
+    total_masked = np.ma.masked_where(total_array <= 0, total_array)
+    if total_masked.count() <= 0:
+        return None
+
+    fig, ax = _setup_axes(country, title)
+    left = transform.c
+    top = transform.f
+    right = left + transform.a * total_masked.shape[1]
+    bottom = top + transform.e * total_masked.shape[0]
+    image = ax.imshow(total_masked, extent=[left, right, bottom, top], origin="upper", cmap=cmap, alpha=0.85, zorder=1)
+    fig.colorbar(image, ax=ax, fraction=0.04, pad=0.02)
+    city_handles = _plot_cities(ax, cities)
+    if city_handles:
+        ax.legend(handles=city_handles, loc="lower left", fontsize=8)
+    _annotate_resolution(ax, resolution_label)
+    out = out_dir / out_name
+    _save(fig, out)
+    return out
+
+
+def _spam_total_metric_array(country: gpd.GeoDataFrame, tif_paths: list[Path]) -> tuple[np.ndarray | None, str]:
+    all_tif_paths = [path for path in tif_paths if path.exists()]
+    if not all_tif_paths:
+        return None, ""
+
+    total_array = None
+    resolution_label = ""
+    for path in all_tif_paths:
+        with rasterio.open(path) as src:
+            if not resolution_label:
+                resolution_label = _format_resolution_label(
+                    src.res[0],
+                    src.res[1],
+                    float(country.to_crs("EPSG:4326").geometry.unary_union.centroid.y),
+                )
+            try:
+                clipped, _ = mask(src, country.geometry, crop=True, filled=True, nodata=0)
+            except ValueError:
+                continue
+        data = clipped[0].astype("float32")
+        data[data < 0] = 0
+        if float(data.sum()) <= 0:
+            continue
+        if total_array is None:
+            total_array = np.zeros_like(data, dtype="float32")
+        total_array += data
+
+    return total_array, resolution_label
+
+
+def _render_spam_distribution(
+    values: np.ndarray,
+    out_dir: Path,
+    title: str,
+    out_name: str,
+    x_label: str,
+) -> Path | None:
+    positive = values[np.isfinite(values) & (values > 0)]
+    if positive.size == 0:
+        return None
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bins = np.geomspace(float(positive.min()), float(positive.max()), 30)
+    ax.hist(positive, bins=bins, color="#8c510a", alpha=0.85, edgecolor="white")
+    ax.set_xscale("log")
+    ax.set_title(title)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("Pixel count")
+    stats = (
+        f"n={positive.size}\n"
+        f"sum={positive.sum():,.0f}\n"
+        f"median={np.median(positive):,.2f}\n"
+        f"p95={np.percentile(positive, 95):,.2f}\n"
+        f"max={positive.max():,.2f}"
+    )
+    ax.text(
+        0.98,
+        0.98,
+        stats,
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=8,
+        bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "alpha": 0.9, "edgecolor": "#666666"},
+    )
+    out = out_dir / out_name
+    _save(fig, out)
+    return out
+
+
+def _render_spam(
+    country: gpd.GeoDataFrame,
+    project_root: Path,
+    out_dir: Path,
+    cities: gpd.GeoDataFrame | None = None,
+) -> tuple[Path | None, Path | None, Path | None, Path | None]:
     spam_dir = project_root / "spam_tifs"
     all_tif_paths = [spam_dir / f"spam2010V2r0_global_H_{code}_A.tif" for code in SPAM_CODES]
     all_tif_paths = [path for path in all_tif_paths if path.exists()]
     if not all_tif_paths:
-        return None, None
+        return None, None, None, None
 
     total_array = None
     dominant_index = None
@@ -489,7 +652,7 @@ def _render_spam(country: gpd.GeoDataFrame, project_root: Path, out_dir: Path) -
         dominant_index[better] = idx
 
     if total_array is None or transform is None or not active_tif_paths:
-        return None, None
+        return None, None, None, None
 
     total_masked = np.ma.masked_where(total_array <= 0, total_array)
     total_out = None
@@ -501,6 +664,9 @@ def _render_spam(country: gpd.GeoDataFrame, project_root: Path, out_dir: Path) -
         bottom = top + transform.e * total_masked.shape[0]
         image = ax.imshow(total_masked, extent=[left, right, bottom, top], origin="upper", cmap="YlGn", alpha=0.85, zorder=1)
         fig.colorbar(image, ax=ax, fraction=0.04, pad=0.02)
+        city_handles = _plot_cities(ax, cities)
+        if city_handles:
+            ax.legend(handles=city_handles, loc="lower left", fontsize=8)
         _annotate_resolution(ax, resolution_label)
         total_out = out_dir / "spam_total_harvested_area.png"
         _save(fig, total_out)
@@ -517,12 +683,34 @@ def _render_spam(country: gpd.GeoDataFrame, project_root: Path, out_dir: Path) -
         ax.imshow(dom_masked, extent=[left, right, bottom, top], origin="upper", cmap=cmap, alpha=0.8, zorder=1, vmin=0, vmax=max(len(active_tif_paths) - 1, 1))
         labels = [SPAM_CODES[path.stem.split("_")[3]] for path in active_tif_paths]
         handles = [Line2D([0], [0], marker="s", linestyle="", color=cmap(i), label=labels[i], markersize=8) for i in range(len(labels))]
+        handles += _plot_cities(ax, cities)
         ax.legend(handles=handles, loc="lower left", fontsize=8)
         _annotate_resolution(ax, resolution_label)
         dominant_out = out_dir / "spam_dominant_crop.png"
         _save(fig, dominant_out)
 
-    return total_out, dominant_out
+    prod_dir = project_root / "spam_prod_tifs"
+    prod_paths = [prod_dir / f"spam2010V2r0_global_P_{code}_A.tif" for code in SPAM_CODES]
+    production_out = _render_spam_total_metric(
+        country,
+        prod_paths,
+        out_dir,
+        "SPAM Total Production",
+        "spam_total_production.png",
+        cmap="YlOrBr",
+        cities=cities,
+    )
+    prod_total_array, _ = _spam_total_metric_array(country, prod_paths)
+    production_distribution_out = None
+    if prod_total_array is not None:
+        production_distribution_out = _render_spam_distribution(
+            prod_total_array,
+            out_dir,
+            "SPAM Total Production Distribution",
+            "spam_total_production_distribution.png",
+            "Total production per pixel (tons, log scale)",
+        )
+    return total_out, dominant_out, production_out, production_distribution_out
 
 
 def _render_combined(country: gpd.GeoDataFrame, road_surface_path: Path | None, cities: gpd.GeoDataFrame | None, out_dir: Path) -> Path:
@@ -539,22 +727,7 @@ def _render_combined(country: gpd.GeoDataFrame, road_surface_path: Path | None, 
     else:
         road_handles = []
 
-    city_handles: list[Line2D] = []
-    if cities is not None and not cities.empty:
-        cities = cities.to_crs("EPSG:4326")
-        cities.plot(ax=ax, color="#2b83ba", markersize=180, marker="o", edgecolor="black", linewidth=0.9, zorder=12)
-        for row in cities.itertuples():
-            ax.text(
-                row.geometry.x,
-                row.geometry.y,
-                f" {row.name}",
-                fontsize=9,
-                va="center",
-                ha="left",
-                zorder=13,
-                bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "alpha": 0.9, "edgecolor": "#666666"},
-            )
-        city_handles = [Line2D([0], [0], marker="o", linestyle="", color="#2b83ba", label="cities", markersize=8)]
+    city_handles = _plot_cities(ax, cities)
 
     country.boundary.plot(ax=ax, color="black", linewidth=1.4, zorder=10)
     legend_handles = road_handles + city_handles
@@ -622,13 +795,18 @@ def main() -> None:
     if crop_summary is not None:
         created["cropgrids"] = str(crop_summary.relative_to(project_root))
 
-    spam_total, spam_dom = _render_spam(country, project_root, out_dir)
+    cities = _load_geonames_cities(project_root, iso3, min_population=args.city_pop_threshold)
+
+    spam_total, spam_dom, spam_prod, spam_prod_dist = _render_spam(country, project_root, out_dir, cities=cities)
     if spam_total is not None:
         created["spam_total"] = str(spam_total.relative_to(project_root))
     if spam_dom is not None:
         created["spam_dominant"] = str(spam_dom.relative_to(project_root))
+    if spam_prod is not None:
+        created["spam_total_production"] = str(spam_prod.relative_to(project_root))
+    if spam_prod_dist is not None:
+        created["spam_total_production_distribution"] = str(spam_prod_dist.relative_to(project_root))
 
-    cities = _load_geonames_cities(project_root, iso3)
     created["all_together"] = str(
         _render_combined(country, road_surface_path if road_surface_path.exists() else None, cities, out_dir).relative_to(project_root)
     )
