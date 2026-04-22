@@ -199,16 +199,20 @@ Operational resolution summary for current sources:
 
 ## Agreed Next Scenario Step
 
-The next agreed SPAM-based routing experiment is intentionally deferred until the routing setup is ready.
+The next agreed SPAM-based step is intentionally deferred until the OD-preparation setup is ready.
 
-Planned rule for the first pass:
+Planned first pass:
 
-- use `SPAM production` cells as agricultural origins
-- keep them separated by crop, not only as one aggregated surface
+- define `origins` from `SPAM production` cells
+- keep origins separated by crop, not only as one aggregated surface
 - prioritize high-production cells using crop-specific upper quantiles such as `p95`
-- route each selected origin to the nearest city node as a simple first-pass destination proxy
+- define `destinations` as the nearest city for each selected origin
 
-This note is a future-work decision only. It does not change the current pipeline behavior yet.
+Scope boundary for this next step:
+
+- this is an `OD extraction / assignment` step first
+- no route calculation is part of this step yet
+- no change to the current scenario code is implied by this note alone
 
 ## Article Data vs Current Collection
 
