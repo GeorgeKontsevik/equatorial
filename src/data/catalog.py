@@ -132,7 +132,7 @@ def build_inventory_report(frame: pd.DataFrame) -> str:
         "era5": "Recommended replacement for older climate reanalysis inputs: ERA5-Land or ERA5 via the Copernicus CDS API.",
         "era5_spi": "Recommended ready-made drought indicator for SPI-based thresholds: Drought.gov / NOAA NIDIS global ERA5 SPI GeoTIFFs.",
         "landslide_susceptibility": "Recommended first-pass rainfall-triggered landslide susceptibility context: NASA global landslide susceptibility map.",
-        "flood": "Recommended replacement for coarse flood proxies: JRC/Copernicus river flood hazard maps; GloFAS only as fallback.",
+        "flood": "Recommended dynamic flood source: Copernicus GFM observed flood extent (Sentinel-1 SAR, via STAC).",
         "coastaldem": "Recommended coastal screening elevation source when access is granted: CoastalDEM.",
         "soilgrids": "Recommended replacement for coarse soil covariates: SoilGrids 250 m layers.",
         "ibtracs": "Recommended tropical cyclone track archive: NOAA IBTrACS v04r01.",

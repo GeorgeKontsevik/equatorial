@@ -155,7 +155,7 @@ This first pass currently aims to cover:
 - `era5`: ERA5 / ERA5-Land via CDS API, with manual fallback when credentials or licence acceptance are missing
 - `era5_spi`: ready-made global monthly SPI GeoTIFFs derived from ERA5 via Drought.gov / NOAA NIDIS
 - `landslide_susceptibility`: NASA global landslide susceptibility map clip for the active study area
-- `flood`: JRC / Copernicus global flood hazard tiles by bbox
+- `flood`: Copernicus GFM observed flood extent via STAC by bbox and date window
 - `coastaldem`: manual request workflow with catalog placeholder
 - `soilgrids`: WCS subset attempt with manual fallback
 - `ibtracs`: NOAA IBTrACS CSV / NetCDF
@@ -354,7 +354,7 @@ Status legend:
 
 | Status | In Article (Methods) | Article Source(s) | Spatial Detail In Article | Availability | What Exists In Current `equatorial` Collection | Current Source(s) | Spatial Detail In Current Collection | Where This Comes From In Current Project |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `🟢` | River and surface flood hazard from `Fathom` global pluvial/fluvial maps | `Fathom Global` pluvial/fluvial flood hazard dataset (May 2017 in article) | 3-arcsecond (about 90 m) gridded water-depth hazard; ten return periods (1/5 to 1/1000); global coverage 56S to 60N | Generally licensed research/commercial ecosystem | Current pipeline uses `JRC/Copernicus GLOFAS` flood hazard tiles (`flood` dataset), and the active `STP` bbox tiles were already downloaded during the latest fetch run | `https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/CEMS-GLOFAS/flood_hazard/` | 3-arcsecond (about 90 m) raster tiles selected by bbox intersection; current STP run produced tiles such as `ID118_N10_W0_RP100_depth.tif` and `ID119_N0_W0_RP100_depth.tif` under `data/raw/flood/jrc_glofas/` | `flood` already exists in project docs/tables; article-vs-source mismatch identified in this comparison |
+| `🟢` | River and surface flood hazard from `Fathom` global pluvial/fluvial maps | `Fathom Global` pluvial/fluvial flood hazard dataset (May 2017 in article) | 3-arcsecond (about 90 m) gridded water-depth hazard; ten return periods (1/5 to 1/1000); global coverage 56S to 60N | Generally licensed research/commercial ecosystem | Current pipeline uses Copernicus GFM observed flood extent scenes for date-based overlays (`flood` dataset) | `https://global-flood.emergency.copernicus.eu/react/general-information/data-access/` and STAC endpoint `https://stac.eodc.eu/api/v1/search` | About 20 m Sentinel-1 SAR flood-extent tiles (ensemble layer), stored under `data/raw/flood/copernicus_gfm/` by product/year/day-of-year | This source is event/snapshot-oriented and can be aggregated by week; it is not a return-period depth hazard layer |
 | `🟡` | Coastal flooding stack (`LISFLOOD-FP`, `MERIT-DEM`, `WAVEWATCH-III`, `DFLOW-FM`) | JRC coastal flood map workflow (article methods) | MERIT-DEM at 3 arcsecond input; inundation simulation at 90 m; coastal segments around 75 km with land up to 100 km inland | Multi-source modeling stack; not a single quick download product | No full coastal hazard-model stack currently automated; only `coastaldem` manual placeholder | `CoastalDEM` product page: `https://www.climatecentral.org/coastaldem-v2.1` | No coastal inundation simulation outputs currently cataloged; only manual acquisition placeholder for CoastalDEM | Article-methods mapping added in this comparison; `coastaldem` already exists in project docs/tables |
 
 ### Parameters And Assumptions

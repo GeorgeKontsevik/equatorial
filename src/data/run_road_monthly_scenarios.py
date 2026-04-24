@@ -150,16 +150,37 @@ def _ensure_geonames_country(project_root: Path, iso2: str) -> Path:
     return path
 
 
-def _load_cities(project_root: Path, iso3: str, population_threshold: int, target_crs: str) -> gpd.GeoDataFrame:
-    iso2 = _country_iso2(iso3)
-    zip_path = _ensure_geonames_country(project_root, iso2)
+def _ensure_geonames_global(project_root: Path) -> Path:
+    target = project_root / "data" / "raw" / "cities" / "global" / "cities500.zip"
+    context = _fetch_context(project_root)
+    url = "https://download.geonames.org/export/dump/cities500.zip"
+    path, _ = ensure_local_copy(url, target, context)
+    return path
+
+
+def _read_geonames_zip(zip_path: Path) -> pd.DataFrame:
     with zipfile.ZipFile(zip_path) as archive:
         member = next(name for name in archive.namelist() if name.lower().endswith(".txt"))
         with archive.open(member) as handle:
-            cities = pd.read_csv(handle, sep="\t", header=None, names=GEONAMES_COLUMNS, dtype={"country_code": "string"})
+            frame = pd.read_csv(handle, sep="\t", header=None, names=GEONAMES_COLUMNS, dtype={"country_code": "string"})
+    frame["population"] = pd.to_numeric(frame["population"], errors="coerce").fillna(0)
+    return frame
 
-    cities["population"] = pd.to_numeric(cities["population"], errors="coerce").fillna(0)
+
+def _load_cities(project_root: Path, iso3: str, population_threshold: int, target_crs: str) -> gpd.GeoDataFrame:
+    iso2 = _country_iso2(iso3)
+    country_zip = _ensure_geonames_country(project_root, iso2)
+    cities = _read_geonames_zip(country_zip)
     cities = cities[(cities["feature_class"] == "P") & (cities["population"] >= population_threshold)].copy()
+    if cities.empty:
+        global_zip = _ensure_geonames_global(project_root)
+        fallback = _read_geonames_zip(global_zip)
+        fallback = fallback[
+            (fallback["country_code"].astype("string").str.upper() == iso2.upper())
+            & (fallback["feature_class"] == "P")
+            & (fallback["population"] >= population_threshold)
+        ].copy()
+        cities = fallback
     if cities.empty:
         raise RuntimeError(f"No GeoNames cities >= {population_threshold:,} found for {iso3}.")
 
@@ -233,7 +254,10 @@ def _round_node(x: float, y: float) -> tuple[float, float]:
     return (round(float(x), 1), round(float(y), 1))
 
 
-def _build_graph(roads_proj: gpd.GeoDataFrame, closed_row_ids: set[int]) -> tuple[dict[int, list[tuple[int, float]]], dict[int, tuple[float, float]], STRtree, dict[int, int]]:
+def _build_graph(
+    roads_proj: gpd.GeoDataFrame,
+    closed_row_ids: set[int],
+) -> tuple[dict[int, list[tuple[int, float]]], dict[int, tuple[float, float]], STRtree, dict[bytes, int], dict[int, int]]:
     adjacency: dict[int, list[tuple[int, float]]] = {}
     node_lookup: dict[tuple[float, float], int] = {}
     node_coords: dict[int, tuple[float, float]] = {}
@@ -264,15 +288,26 @@ def _build_graph(roads_proj: gpd.GeoDataFrame, closed_row_ids: set[int]) -> tupl
                 adjacency[start_id].append((end_id, length))
                 adjacency[end_id].append((start_id, length))
 
-    node_geoms = [Point(node_coords[node_id]) for node_id in sorted(node_coords)]
+    sorted_node_ids = sorted(node_coords)
+    node_geoms = [Point(node_coords[node_id]) for node_id in sorted_node_ids]
     tree = STRtree(node_geoms)
-    geom_id_to_node = {id(geom): node_id for geom, node_id in zip(node_geoms, sorted(node_coords), strict=False)}
-    return adjacency, node_coords, tree, geom_id_to_node
+    geom_wkb_to_node = {geom.wkb: node_id for geom, node_id in zip(node_geoms, sorted(node_coords), strict=False)}
+    tree_index_to_node = {idx: node_id for idx, node_id in enumerate(sorted_node_ids)}
+    return adjacency, node_coords, tree, geom_wkb_to_node, tree_index_to_node
 
 
-def _nearest_node_id(point: Point, tree: STRtree, geom_id_to_node: dict[int, int]) -> tuple[int, float]:
+def _nearest_node_id(
+    point: Point,
+    tree: STRtree,
+    geom_wkb_to_node: dict[bytes, int],
+    tree_index_to_node: dict[int, int],
+) -> tuple[int, float]:
     nearest = tree.nearest(point)
-    node_id = geom_id_to_node[id(nearest)]
+    if isinstance(nearest, (int, np.integer)):
+        node_id = tree_index_to_node[int(nearest)]
+        nearest_geom = tree.geometries[int(nearest)]
+        return node_id, float(point.distance(nearest_geom))
+    node_id = geom_wkb_to_node[nearest.wkb]
     return node_id, float(point.distance(nearest))
 
 
@@ -320,14 +355,14 @@ def _run_scenario(
     roads_proj["effective_surface"] = effective_surface
     roads_proj["closed"] = roads_proj["road_row_id"].astype(int).isin(closed_ids)
 
-    adjacency, node_coords, tree, geom_id_to_node = _build_graph(roads_proj, closed_ids)
+    adjacency, node_coords, tree, geom_wkb_to_node, tree_index_to_node = _build_graph(roads_proj, closed_ids)
     if not adjacency:
         raise RuntimeError(f"Scenario {scenario.name} removed all traversable road edges.")
 
     city_sources: list[tuple[int, float]] = []
     city_snap_records: list[dict[str, float | int | str]] = []
     for row in cities_proj.itertuples():
-        node_id, snap_distance = _nearest_node_id(row.geometry, tree, geom_id_to_node)
+        node_id, snap_distance = _nearest_node_id(row.geometry, tree, geom_wkb_to_node, tree_index_to_node)
         city_sources.append((node_id, snap_distance))
         city_snap_records.append(
             {
@@ -342,7 +377,7 @@ def _run_scenario(
 
     origin_records: list[dict[str, float | int | str | None]] = []
     for row in origins_proj.itertuples():
-        node_id, snap_distance = _nearest_node_id(row.geometry, tree, geom_id_to_node)
+        node_id, snap_distance = _nearest_node_id(row.geometry, tree, geom_wkb_to_node, tree_index_to_node)
         route_distance = graph_dist.get(node_id)
         total_distance = None if route_distance is None else float(route_distance + snap_distance)
         origin_records.append(

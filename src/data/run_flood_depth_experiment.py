@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import geopandas as gpd
@@ -23,7 +25,7 @@ import rasterio
 import yaml
 from matplotlib.lines import Line2D
 from rasterio.merge import merge
-from rasterio.transform import rowcol
+from rasterio.transform import from_bounds, rowcol
 from shapely.geometry import LineString, MultiLineString, Point, box
 from tqdm.auto import tqdm
 
@@ -90,24 +92,114 @@ def _load_damage_config(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))["road_climate_damage"]
 
 
-def _load_flood_mosaic(project_root: Path, country: gpd.GeoDataFrame) -> tuple[np.ndarray, rasterio.Affine]:
-    rp_dir = project_root / "data" / "raw" / "flood" / "jrc_glofas" / "RP100"
+def _parse_iso_date(value: str) -> date:
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def _flood_window_dates(flood_cfg: dict | None) -> set[date] | None:
+    if not flood_cfg:
+        return None
+    if flood_cfg.get("dates"):
+        return {_parse_iso_date(str(item)) for item in flood_cfg["dates"]}
+    if flood_cfg.get("start_date") and flood_cfg.get("end_date"):
+        start = _parse_iso_date(str(flood_cfg["start_date"]))
+        end = _parse_iso_date(str(flood_cfg["end_date"]))
+        if end < start:
+            raise ValueError(f"Flood window end_date before start_date: {start}..{end}")
+        step_days = int(flood_cfg.get("aggregation_period_days", flood_cfg.get("step_days", 1)))
+        if step_days <= 0:
+            raise ValueError("flood.aggregation_period_days must be a positive integer.")
+        days = (end - start).days
+        dates = {start + timedelta(days=offset) for offset in range(0, days + 1, step_days)}
+        dates.add(end)
+        return dates
+    return None
+
+
+def _snapshot_to_date(year: int, doy: int) -> date:
+    return date(year, 1, 1) + timedelta(days=doy - 1)
+
+
+def _load_flood_mosaic(
+    project_root: Path,
+    country: gpd.GeoDataFrame,
+    flood_cfg: dict | None = None,
+) -> tuple[np.ndarray, rasterio.Affine, tuple[int, int] | None]:
+    flood_root = project_root / "data" / "raw" / "flood"
+    if not flood_root.exists():
+        raise FileNotFoundError("No flood tiles found under data/raw/flood.")
+
+    pattern = re.compile(r"^\d{3}$")
+    snapshots: dict[tuple[int, int], list[Path]] = {}
+    for tif_path in flood_root.glob("*/*/*/*/*.tif"):
+        try:
+            year = int(tif_path.parent.parent.name)
+            doy_raw = tif_path.parent.name
+            if not pattern.match(doy_raw):
+                continue
+            doy = int(doy_raw)
+        except ValueError:
+            continue
+        snapshots.setdefault((year, doy), []).append(tif_path)
+
+    if not snapshots:
+        raise FileNotFoundError("No flood snapshots found under data/raw/flood.")
+
+    allowed_dates = _flood_window_dates(flood_cfg)
     bbox_geom = box(*country.total_bounds)
+    bbox_by_crs: dict[str, object] = {}
     candidate_paths: list[Path] = []
-    for tif_path in sorted(rp_dir.glob("*.tif")):
-        with rasterio.open(tif_path) as src:
-            if box(*src.bounds).intersects(bbox_geom):
-                candidate_paths.append(tif_path)
+    selected_snapshot: tuple[int, int] | None = None
+    for snapshot in sorted(snapshots.keys(), reverse=True):
+        if allowed_dates is not None and _snapshot_to_date(snapshot[0], snapshot[1]) not in allowed_dates:
+            continue
+        snapshot_paths = sorted(snapshots[snapshot])
+        intersects: list[Path] = []
+        for tif_path in snapshot_paths:
+            with rasterio.open(tif_path) as src:
+                crs_key = str(src.crs) if src.crs else "EPSG:4326"
+                if crs_key not in bbox_by_crs:
+                    if src.crs:
+                        bbox_by_crs[crs_key] = box(*country.to_crs(src.crs).total_bounds)
+                    else:
+                        bbox_by_crs[crs_key] = bbox_geom
+                if box(*src.bounds).intersects(bbox_by_crs[crs_key]):
+                    intersects.append(tif_path)
+        if intersects:
+            candidate_paths = intersects
+            selected_snapshot = snapshot
+            break
     if not candidate_paths:
-        raise FileNotFoundError("No RP100 flood tiles intersect the selected country.")
+        if allowed_dates is None:
+            raise FileNotFoundError("No flood tiles intersect the selected country.")
+        bounds = country.total_bounds
+        fallback = np.zeros((1, 1), dtype=np.float32)
+        fallback_transform = from_bounds(bounds[0], bounds[1], bounds[2], bounds[3], width=1, height=1)
+        print(
+            "[flood-depth] no flood snapshots intersect configured period/country, using zero fallback raster",
+            flush=True,
+        )
+        return fallback, fallback_transform, None
+    if selected_snapshot is not None:
+        selected_date = _snapshot_to_date(selected_snapshot[0], selected_snapshot[1])
+        print(
+            f"[flood-depth] using_flood_snapshot={selected_snapshot[0]}-DOY{selected_snapshot[1]:03d} "
+            f"date={selected_date.isoformat()} "
+            f"tiles={len(candidate_paths)}",
+            flush=True,
+        )
 
     datasets = [rasterio.open(path) for path in candidate_paths]
     try:
         merged, transform = merge(datasets)
+        nodata = datasets[0].nodata
     finally:
         for dataset in datasets:
             dataset.close()
-    return merged[0], transform
+    data = merged[0]
+    if nodata is not None:
+        data = np.where(data == nodata, 0, data)
+    return data, transform, selected_snapshot
 
 
 def _sample_raster_value(data: np.ndarray, transform, point: Point) -> float:
@@ -196,7 +288,9 @@ def _setup_axes(country: gpd.GeoDataFrame, title: str) -> tuple[plt.Figure, plt.
 
 def _render_severity_map(country: gpd.GeoDataFrame, roads: gpd.GeoDataFrame, out_path: Path) -> Path:
     fig, ax = _setup_axes(country, "Flood Depth Experiment: Target Roads By Severity")
-    roads.loc[roads["severity"] == "none"].plot(ax=ax, color=SEVERITY_COLORS["none"], linewidth=0.45, alpha=0.5, zorder=2)
+    none_subset = roads.loc[roads["severity"] == "none"]
+    if not none_subset.empty:
+        none_subset.plot(ax=ax, color=SEVERITY_COLORS["none"], linewidth=0.45, alpha=0.5, zorder=2)
     for severity in ["minor", "moderate", "severe", "catastrophic"]:
         subset = roads.loc[roads["severity"] == severity]
         if not subset.empty:
@@ -252,6 +346,7 @@ def main() -> None:
     iso3 = str(config.get("study_area", {}).get("country_code", args.country_code)).upper()
 
     damage_cfg = _load_damage_config(args.damage_config)
+    flood_cfg = config.get("datasets", {}).get("flood", {})
     indicator_cfg = damage_cfg["indicators"]["flood_depth"]
     thresholds = indicator_cfg["thresholds"]
     in_scope_surfaces = set(damage_cfg["road_selection"]["include_surface_groups"])
@@ -264,7 +359,7 @@ def main() -> None:
         raise RuntimeError(f"No in-scope roads found for {iso3}.")
     print(f"[flood-depth] country={iso3} total_roads={len(roads)} scoped_roads={len(scoped_roads)}", flush=True)
 
-    flood_data, flood_transform = _load_flood_mosaic(project_root, country)
+    flood_data, flood_transform, selected_snapshot = _load_flood_mosaic(project_root, country, flood_cfg=flood_cfg)
     print("[flood-depth] sampling flood depth on scoped roads", flush=True)
     scoped_roads["flood_depth_m"] = [
         _depth_for_geometry(geom, flood_data, flood_transform)
@@ -315,6 +410,22 @@ def main() -> None:
         "sampling_strategy": "single_probe_point_midpoint_first_pass",
         "implementation_scope": damage_cfg["implementation_scope"],
         "weekly_aggregation": indicator_cfg.get("weekly_aggregation"),
+        "analysis_period": damage_cfg.get("analysis_period"),
+        "flood_selection": {
+            "start_date": flood_cfg.get("start_date"),
+            "end_date": flood_cfg.get("end_date"),
+            "aggregation_period_days": flood_cfg.get("aggregation_period_days", flood_cfg.get("step_days")),
+            "selected_snapshot": (
+                None
+                if selected_snapshot is None
+                else f"{selected_snapshot[0]}-DOY{selected_snapshot[1]:03d}"
+            ),
+            "selected_snapshot_date": (
+                None
+                if selected_snapshot is None
+                else _snapshot_to_date(selected_snapshot[0], selected_snapshot[1]).isoformat()
+            ),
+        },
         "thresholds_m": thresholds,
         "n_total_roads": int(len(roads)),
         "n_scoped_roads": int(len(scoped_roads)),

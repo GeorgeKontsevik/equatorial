@@ -94,7 +94,7 @@ def _ensure_dataset_defaults(config: dict[str, Any], study_area: dict[str, Any])
         if isinstance(request.get("area"), list):
             request["area"] = [float(value) for value in request["area"]]
         if slug:
-            era5_cfg.setdefault("target_filename", f"era5-land-monthly-{slug}.nc")
+            era5_cfg.setdefault("target_filename", f"era5-land-{slug}.nc")
 
     landslide_cfg = datasets.get("landslide_susceptibility")
     if landslide_cfg is not None and slug:

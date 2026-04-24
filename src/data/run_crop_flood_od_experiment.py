@@ -255,6 +255,7 @@ def _attach_flood_status(
     country: gpd.GeoDataFrame,
     thresholds: dict[str, float | None],
     damage_cfg: dict,
+    flood_cfg: dict | None = None,
 ) -> gpd.GeoDataFrame:
     reused = _reuse_flood_road_overlay(project_root, iso3)
     if reused is not None:
@@ -268,7 +269,7 @@ def _attach_flood_status(
         return merged
 
     roads = roads.copy()
-    flood_data, flood_transform = _load_flood_mosaic(project_root, country)
+    flood_data, flood_transform, _ = _load_flood_mosaic(project_root, country, flood_cfg=flood_cfg)
     roads["flood_depth_m"] = 0.0
     scope_index = roads.index[roads["in_scope"]]
     print(f"[crop-flood-od] sampling_flood_depth_for_roads={len(scope_index)}", flush=True)
@@ -603,6 +604,7 @@ def main() -> None:
 
     damage_cfg = _load_damage_config(args.damage_config)
     loss_cfg = _load_loss_config(args.loss_config)
+    flood_cfg = config.get("datasets", {}).get("flood", {})
     indicator_cfg = damage_cfg["indicators"]["flood_depth"]
     thresholds = indicator_cfg["thresholds"]
     in_scope_surfaces = set(damage_cfg["road_selection"]["include_surface_groups"])
@@ -610,7 +612,7 @@ def main() -> None:
     roads = _load_roads_cached(project_root, iso3, country)
     roads["in_scope"] = roads["surface_group"].isin(in_scope_surfaces)
     print(f"[crop-flood-od] roads_loaded={len(roads)} in_scope={int(roads['in_scope'].sum())}", flush=True)
-    roads = _attach_flood_status(project_root, iso3, roads, country, thresholds, damage_cfg)
+    roads = _attach_flood_status(project_root, iso3, roads, country, thresholds, damage_cfg, flood_cfg=flood_cfg)
     roads_proj = roads.to_crs(target_crs)
 
     cities_proj = _load_geonames_cities(project_root, iso3, args.city_population_threshold, target_crs)

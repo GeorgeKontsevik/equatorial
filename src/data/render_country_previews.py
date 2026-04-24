@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import zipfile
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import geopandas as gpd
@@ -16,6 +18,7 @@ import pycountry
 import rasterio
 import xarray as xr
 from matplotlib.lines import Line2D
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from rasterio.mask import mask
 from rasterio.merge import merge
 from shapely.geometry import LineString, box
@@ -251,6 +254,7 @@ def _plot_cities(ax: plt.Axes, cities: gpd.GeoDataFrame | None, label_cities: bo
 
 def _render_single_raster(country: gpd.GeoDataFrame, path: Path, out_path: Path, title: str, cmap: str = "viridis") -> Path | None:
     with rasterio.open(path) as src:
+        nodata = src.nodata
         resolution_label = _format_resolution_label(src.res[0], src.res[1], float(country.to_crs("EPSG:4326").geometry.unary_union.centroid.y))
         mask_shapes = country.geometry
         if src.crs:
@@ -261,6 +265,8 @@ def _render_single_raster(country: gpd.GeoDataFrame, path: Path, out_path: Path,
             return None
     band = clipped[0]
     data = np.ma.masked_invalid(band)
+    if nodata is not None:
+        data = np.ma.masked_where(data == nodata, data)
     data = np.ma.masked_where(data == 0, data)
 
     fig, ax = _setup_axes(country, title)
@@ -279,17 +285,169 @@ def _render_single_raster(country: gpd.GeoDataFrame, path: Path, out_path: Path,
     return out_path
 
 
-def _render_flood(country: gpd.GeoDataFrame, raw_root: Path, out_dir: Path) -> Path | None:
-    rp_dir = raw_root / "flood" / "jrc_glofas" / "RP100"
-    if not rp_dir.exists():
+def _render_era5_spi(country: gpd.GeoDataFrame, raw_root: Path, out_dir: Path) -> Path | None:
+    spi_paths = sorted((raw_root / "era5_spi" / "global" / "monthly").glob("GLOBAL-ERA5_LAND_DAILY-spi-*.tif"))
+    if not spi_paths:
+        return None
+    spi_paths = sorted(spi_paths, key=lambda path: int(path.stem.split("-spi-")[-1].removesuffix("mo")))
+
+    clipped_layers: list[tuple[str, np.ma.MaskedArray, object]] = []
+    resolution_label = ""
+    for path in spi_paths:
+        scale = path.stem.split("-spi-")[-1]
+        with rasterio.open(path) as src:
+            if not resolution_label:
+                resolution_label = _format_resolution_label(
+                    src.res[0],
+                    src.res[1],
+                    float(country.to_crs("EPSG:4326").geometry.unary_union.centroid.y),
+                )
+            mask_shapes = country.to_crs(src.crs).geometry if src.crs else country.geometry
+            try:
+                clipped, transform = mask(src, mask_shapes, crop=True, filled=False)
+            except ValueError:
+                continue
+            band = clipped[0]
+            data = np.ma.masked_invalid(band)
+            if src.nodata is not None:
+                data = np.ma.masked_where(data == src.nodata, data)
+            clipped_layers.append((scale, data, transform))
+
+    if not clipped_layers:
         return None
 
+    fig, axes = plt.subplots(2, 3, figsize=(14, 8), sharex=False, sharey=False)
+    fig.subplots_adjust(left=0.05, right=0.88, bottom=0.08, top=0.9, wspace=0.25, hspace=0.32)
+    axes_flat = axes.ravel()
+    image = None
+    for ax, (scale, data, transform) in zip(axes_flat, clipped_layers, strict=False):
+        minx, miny, maxx, maxy = country.total_bounds
+        pad_x = max(maxx - minx, 0.2) * 0.08
+        pad_y = max(maxy - miny, 0.2) * 0.08
+        ax.set_xlim(minx - pad_x, maxx + pad_x)
+        ax.set_ylim(miny - pad_y, maxy + pad_y)
+        ax.set_aspect("equal")
+        ax.set_title(f"SPI {scale}")
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        if data.count() > 0:
+            left = transform.c
+            top = transform.f
+            right = left + transform.a * data.shape[1]
+            bottom = top + transform.e * data.shape[0]
+            image = ax.imshow(
+                data,
+                extent=[left, right, bottom, top],
+                origin="upper",
+                cmap="RdBu",
+                vmin=-2.0,
+                vmax=2.0,
+                alpha=0.9,
+                zorder=1,
+            )
+            vals = np.asarray(data.compressed(), dtype="float64")
+            inset = inset_axes(ax, width="34%", height="24%", loc="lower right", borderpad=0.8)
+            inset.hist(vals[np.isfinite(vals)], bins=24, color="#555555", alpha=0.85)
+            inset.axvline(-1.0, color="#3b7ddd", linestyle="--", linewidth=1.0)
+            inset.axvline(-1.5, color="#d65f00", linestyle="-.", linewidth=1.0)
+            inset.axvline(-2.0, color="#b00020", linestyle="-", linewidth=1.0)
+            inset.set_xticks([-2, -1, 0, 1, 2])
+            inset.set_yticks([])
+            inset.set_title("cells", fontsize=7)
+            inset.tick_params(labelsize=7)
+        else:
+            ax.text(0.5, 0.5, "No raster values", transform=ax.transAxes, ha="center", va="center")
+        country.boundary.plot(ax=ax, color="black", linewidth=1.0, zorder=10)
+
+    for ax in axes_flat[len(clipped_layers) :]:
+        ax.axis("off")
+
+    if image is not None:
+        cbar_ax = fig.add_axes([0.91, 0.18, 0.018, 0.64])
+        cbar = fig.colorbar(image, cax=cbar_ax)
+        cbar.set_label("SPI")
+    fig.suptitle("ERA5 SPI Raw Raster Distribution (Gabon clip)", y=0.98)
+    if resolution_label:
+        fig.text(0.99, 0.01, resolution_label, ha="right", va="bottom", fontsize=8)
+    out = out_dir / "era5_spi_raw_distribution.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _parse_iso_date(value: str) -> date:
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def _flood_window_dates(flood_cfg: dict | None) -> set[date] | None:
+    if not flood_cfg:
+        return None
+    if flood_cfg.get("dates"):
+        return {_parse_iso_date(str(item)) for item in flood_cfg["dates"]}
+    if flood_cfg.get("start_date") and flood_cfg.get("end_date"):
+        start = _parse_iso_date(str(flood_cfg["start_date"]))
+        end = _parse_iso_date(str(flood_cfg["end_date"]))
+        if end < start:
+            raise ValueError(f"Flood window end_date before start_date: {start}..{end}")
+        step_days = int(flood_cfg.get("aggregation_period_days", flood_cfg.get("step_days", 1)))
+        if step_days <= 0:
+            raise ValueError("flood.aggregation_period_days must be a positive integer.")
+        days = (end - start).days
+        dates = {start + timedelta(days=offset) for offset in range(0, days + 1, step_days)}
+        dates.add(end)
+        return dates
+    return None
+
+
+def _snapshot_to_date(year: int, doy: int) -> date:
+    return date(year, 1, 1) + timedelta(days=doy - 1)
+
+
+def _render_flood(country: gpd.GeoDataFrame, raw_root: Path, out_dir: Path, flood_cfg: dict | None = None) -> Path | None:
+    flood_root = raw_root / "flood"
+    if not flood_root.exists():
+        return None
+
+    pattern = re.compile(r"^\d{3}$")
+    snapshots: dict[tuple[int, int], list[Path]] = {}
+    for tif_path in flood_root.glob("*/*/*/*/*.tif"):
+        try:
+            year = int(tif_path.parent.parent.name)
+            doy_raw = tif_path.parent.name
+            if not pattern.match(doy_raw):
+                continue
+            doy = int(doy_raw)
+        except ValueError:
+            continue
+        snapshots.setdefault((year, doy), []).append(tif_path)
+    if not snapshots:
+        return None
+
+    allowed_dates = _flood_window_dates(flood_cfg)
     bbox_geom = box(*country.total_bounds)
+    bbox_by_crs: dict[str, object] = {}
     candidate_paths: list[Path] = []
-    for tif_path in sorted(rp_dir.glob("*.tif")):
-        with rasterio.open(tif_path) as src:
-            if box(*src.bounds).intersects(bbox_geom):
-                candidate_paths.append(tif_path)
+    selected_snapshot: tuple[int, int] | None = None
+    for snapshot in sorted(snapshots.keys(), reverse=True):
+        if allowed_dates is not None and _snapshot_to_date(snapshot[0], snapshot[1]) not in allowed_dates:
+            continue
+        snapshot_paths = sorted(snapshots[snapshot])
+        intersects: list[Path] = []
+        for tif_path in snapshot_paths:
+            with rasterio.open(tif_path) as src:
+                crs_key = str(src.crs) if src.crs else "EPSG:4326"
+                if crs_key not in bbox_by_crs:
+                    if src.crs:
+                        bbox_by_crs[crs_key] = box(*country.to_crs(src.crs).total_bounds)
+                    else:
+                        bbox_by_crs[crs_key] = bbox_geom
+                if box(*src.bounds).intersects(bbox_by_crs[crs_key]):
+                    intersects.append(tif_path)
+        if intersects:
+            candidate_paths = intersects
+            selected_snapshot = snapshot
+            break
 
     if not candidate_paths:
         return None
@@ -314,8 +472,20 @@ def _render_flood(country: gpd.GeoDataFrame, raw_root: Path, out_dir: Path) -> P
     with rasterio.open(temp_path, "w", **meta) as dst:
         dst.write(merged)
 
+    snapshot_label = ""
+    if selected_snapshot is not None:
+        snapshot_label = (
+            f" ({selected_snapshot[0]}-DOY{selected_snapshot[1]:03d}, "
+            f"{_snapshot_to_date(selected_snapshot[0], selected_snapshot[1]).isoformat()})"
+        )
     try:
-        out = _render_single_raster(country, temp_path, out_dir / "flood_rp100.png", "Flood Hazard RP100", cmap="Blues")
+        out = _render_single_raster(
+            country,
+            temp_path,
+            out_dir / "flood_observed_latest.png",
+            f"NASA Observed Flood Water{snapshot_label}",
+            cmap="Blues",
+        )
     finally:
         temp_path.unlink(missing_ok=True)
     return out
@@ -744,6 +914,7 @@ def main() -> None:
     config = load_config(args.config)
     project_root = args.config.resolve().parents[1]
     study_area = config.get("study_area", {})
+    flood_cfg = config.get("datasets", {}).get("flood", {})
     iso3 = str(args.country_code or study_area.get("country_code", "")).upper()
     if not iso3:
         raise ValueError("study_area.country_code is required")
@@ -777,15 +948,22 @@ def main() -> None:
         if rendered is not None:
             created["gem"] = str(rendered.relative_to(project_root))
 
+    spi_path = _render_era5_spi(country, raw_root, out_dir)
+    if spi_path is not None:
+        created["era5_spi"] = str(spi_path.relative_to(project_root))
+
     for soil_path in sorted((raw_root / "soilgrids").glob("*.tif")):
         key = f"soilgrids_{soil_path.stem}"
         rendered = _render_single_raster(country, soil_path, out_dir / f"{soil_path.stem}.png", f"SoilGrids {soil_path.stem}", cmap="YlGn")
         if rendered is not None:
             created[key] = str(rendered.relative_to(project_root))
 
-    flood_path = _render_flood(country, raw_root, out_dir)
+    flood_path = _render_flood(country, raw_root, out_dir, flood_cfg=flood_cfg)
     if flood_path is not None:
-        created["flood_rp100"] = str(flood_path.relative_to(project_root))
+        created["flood_observed"] = str(flood_path.relative_to(project_root))
+    else:
+        # Keep preview outputs semantically clean when no flood raster matched the configured period.
+        (out_dir / "flood_observed_latest.png").unlink(missing_ok=True)
 
     ibtracs_path = raw_root / "ibtracs" / "global" / "v04r01" / "netcdf" / "IBTrACS.since1980.v04r01.nc"
     if ibtracs_path.exists():
