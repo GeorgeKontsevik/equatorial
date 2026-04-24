@@ -15,6 +15,29 @@ road_climate_damage:
       - For damage handling, `unknown` is treated the same as `unpaved` for now.
       - Keep the original surface labels unchanged in the data outputs.
 
+  analysis_period:
+    start_date: "2024-08-01"
+    end_date: "2024-10-31"
+    aggregation_period_days: 7
+    aggregation_label: weekly
+
+  weekly_experiment_protocol:
+    period_locked: true
+    baseline:
+      compute_once: true
+      description: nearest destination by roads without external impacts
+    origins:
+      default_sampling: random_fixed_per_city
+      default_n_random_origins: 5
+      fixed_across_city_experiments: true
+    scenarios:
+      - unknown_as_paved
+      - unknown_as_unpaved
+    report_mode:
+      compare_side_by_side_without_delta: true
+    isolated_origin_access_minutes: 100000
+    graph_solver: pandana
+
   implementation_scope:
     strategy: add_one_indicator_at_a_time
     active_indicators:
@@ -85,7 +108,7 @@ road_climate_damage:
       units: m
       source_layers:
         - flood
-      weekly_aggregation: static_depth_overlay
+      weekly_aggregation: weekly_7d_snapshot_step
       thresholds:
         minor: 0.1
         moderate: 0.2

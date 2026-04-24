@@ -1,0 +1,13 @@
+factor,direction,threshold,threshold_value
+flood_weekly,gte,minor,
+flood_weekly,gte,moderate,0.1
+flood_weekly,gte,severe,0.3
+flood_weekly,gte,catastrophic,0.5
+era5_skt_weekly_max,gte,minor,
+era5_skt_weekly_max,gte,moderate,40.0
+era5_skt_weekly_max,gte,severe,45.0
+era5_skt_weekly_max,gte,catastrophic,50.0
+era5_wind_speed_weekly_max,gte,minor,
+era5_wind_speed_weekly_max,gte,moderate,15.0
+era5_wind_speed_weekly_max,gte,severe,25.0
+era5_wind_speed_weekly_max,gte,catastrophic,30.0

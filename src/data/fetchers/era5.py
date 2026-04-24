@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from src.data.catalog import CatalogRecord
@@ -66,6 +67,73 @@ def _default_target_name(dataset_id: str, request: dict) -> str:
     return f"{dataset_id}{suffix}"
 
 
+def _parse_iso_date(value: object) -> date:
+    return datetime.strptime(str(value), "%Y-%m-%d").date()
+
+
+def _week_windows(start: date, end: date, step_days: int) -> list[tuple[date, date]]:
+    if step_days <= 0:
+        raise ValueError("ERA5 `request_step_days` must be a positive integer.")
+    windows: list[tuple[date, date]] = []
+    cursor = start
+    while cursor <= end:
+        window_end = min(end, cursor + timedelta(days=step_days - 1))
+        windows.append((cursor, window_end))
+        cursor += timedelta(days=step_days)
+    return windows
+
+
+def _request_for_window(template: dict, start: date, end: date) -> dict:
+    request = dict(template)
+    days = [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
+    request["year"] = sorted({f"{day.year:04d}" for day in days})
+    request["month"] = sorted({f"{day.month:02d}" for day in days})
+    request["day"] = [f"{day.day:02d}" for day in days]
+    return request
+
+
+def _subrequests_from_config(dataset_cfg: dict, dataset_id: str) -> list[tuple[str, dict]]:
+    split_request_by = str(dataset_cfg.get("split_request_by", "")).strip().lower()
+    if split_request_by:
+        if split_request_by != "weekly":
+            raise ValueError(f"Unsupported ERA5 split_request_by `{split_request_by}`.")
+        if not dataset_cfg.get("start_date") or not dataset_cfg.get("end_date"):
+            raise ValueError("ERA5 weekly splitting requires `start_date` and `end_date`.")
+        request_template = _build_request_from_config(dataset_cfg)
+        if not request_template:
+            raise ValueError("ERA5 weekly splitting requires a non-empty `request` template.")
+        start = _parse_iso_date(dataset_cfg["start_date"])
+        end = _parse_iso_date(dataset_cfg["end_date"])
+        if end < start:
+            raise ValueError(f"ERA5 `end_date` must not be earlier than `start_date`: {start}..{end}")
+        step_days = int(dataset_cfg.get("request_step_days", dataset_cfg.get("step_days", 7)))
+        target_prefix = str(dataset_cfg.get("target_prefix", dataset_id)).strip() or dataset_id
+        suffix = Path(_default_target_name(dataset_id, request_template)).suffix
+        return [
+            (f"{target_prefix}-{window_start.isoformat()}{suffix}", _request_for_window(request_template, window_start, window_end))
+            for window_start, window_end in _week_windows(start, end, step_days)
+        ]
+
+    raw = dataset_cfg.get("requests")
+    if isinstance(raw, list) and raw:
+        out: list[tuple[str, dict]] = []
+        for idx, item in enumerate(raw):
+            if not isinstance(item, dict):
+                raise ValueError(f"ERA5 requests[{idx}] must be a mapping.")
+            request = dict(item.get("request") or {})
+            if not request:
+                raise ValueError(f"ERA5 requests[{idx}] is missing a non-empty `request` mapping.")
+            target_name = str(item.get("target_filename") or _default_target_name(dataset_id, request))
+            out.append((target_name, request))
+        return out
+
+    request = _build_request_from_config(dataset_cfg)
+    if not request:
+        return []
+    target_name = str(dataset_cfg.get("target_filename", _default_target_name(dataset_id, request)))
+    return [(target_name, request)]
+
+
 def fetch(dataset_cfg: dict, context) -> list[CatalogRecord]:
     """Retrieve an ERA5-family product through `cdsapi` when credentials are available."""
 
@@ -74,7 +142,7 @@ def fetch(dataset_cfg: dict, context) -> list[CatalogRecord]:
     spatial_resolution_raw = str(dataset_cfg.get("spatial_resolution_raw", "See CDS dataset metadata"))
     temporal_resolution = str(dataset_cfg.get("temporal_resolution", "See CDS dataset metadata"))
     bbox = dataset_cfg.get("bbox")
-    request = _build_request_from_config(dataset_cfg)
+    subrequests = _subrequests_from_config(dataset_cfg, dataset_id)
 
     if not _has_cds_credentials():
         instructions = f"""# Manual Steps For ERA5 / ERA5-Land
@@ -109,7 +177,7 @@ What to do:
             ),
         ]
 
-    if not request:
+    if not subrequests:
         instructions = f"""# Manual Steps For ERA5 / ERA5-Land
 
 No CDS API request payload was configured for dataset `{dataset_id}`.
@@ -135,13 +203,34 @@ Dataset page:
             ),
         ]
 
-    target_name = str(dataset_cfg.get("target_filename", _default_target_name(dataset_id, request)))
-    target_path = ensure_directory(context.raw_root / "era5") / target_name
+    try:
+        import cdsapi
 
-    if target_path.exists():
-        ok, _ = validate_download(target_path)
-        if ok:
-            return [
+        client = cdsapi.Client(quiet=True, progress=False)
+        records: list[CatalogRecord] = []
+        for target_name, request in subrequests:
+            target_path = ensure_directory(context.raw_root / "era5") / target_name
+
+            if target_path.exists():
+                ok, _ = validate_download(target_path)
+                if ok:
+                    records.append(
+                        downloaded_record(
+                            dataset_name="era5",
+                            source_url=source_url,
+                            local_path=target_path,
+                            context=context,
+                            license_or_access_note=ERA5_LICENSE_NOTE,
+                            spatial_resolution_raw=spatial_resolution_raw,
+                            temporal_resolution=temporal_resolution,
+                            bbox=bbox,
+                            notes="Reused an existing local ERA5-family file.",
+                        ),
+                    )
+                    continue
+
+            client.retrieve(dataset_id, request, str(target_path))
+            records.append(
                 downloaded_record(
                     dataset_name="era5",
                     source_url=source_url,
@@ -151,16 +240,14 @@ Dataset page:
                     spatial_resolution_raw=spatial_resolution_raw,
                     temporal_resolution=temporal_resolution,
                     bbox=bbox,
-                    notes="Reused an existing local ERA5-family file.",
+                    notes=join_notes(
+                        f"Retrieved `{dataset_id}` through the CDS API.",
+                        "Request parameters were taken from config/datasets.yaml.",
+                    ),
                 ),
-            ]
-
-    try:
-        import cdsapi
-
-        client = cdsapi.Client(quiet=True, progress=False)
-        client.retrieve(dataset_id, request, str(target_path))
+            )
     except Exception as exc:  # pragma: no cover - runtime/auth/provider dependent
+        request_preview = subrequests[0][1] if subrequests else {}
         instructions = f"""# Manual Steps For ERA5 / ERA5-Land
 
 The CDS API call did not complete successfully.
@@ -173,7 +260,7 @@ Configured dataset id:
 
 Configured request:
 ```python
-{request}
+{request_preview}
 ```
 
 What to check:
@@ -196,19 +283,4 @@ What to check:
             ),
         ]
 
-    return [
-        downloaded_record(
-            dataset_name="era5",
-            source_url=source_url,
-            local_path=target_path,
-            context=context,
-            license_or_access_note=ERA5_LICENSE_NOTE,
-            spatial_resolution_raw=spatial_resolution_raw,
-            temporal_resolution=temporal_resolution,
-            bbox=bbox,
-            notes=join_notes(
-                f"Retrieved `{dataset_id}` through the CDS API.",
-                "Request parameters were taken from config/datasets.yaml.",
-            ),
-        ),
-    ]
+    return records
