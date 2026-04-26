@@ -166,14 +166,20 @@ def _sample_netcdf_timeseries(
             mask = (time_index >= start_time) & (time_index <= end_time if include_end_time else time_index < end_time)
             if not mask.any():
                 return np.full((0, lons.shape[0]), np.nan, dtype="float64")
-            arr = arr.sel({time_dim: arr[time_dim].values[mask]})
+            positions = np.flatnonzero(mask)
+            selected_times = time_index[positions]
+            positions = positions[~selected_times.duplicated()]
+            arr = arr.isel({time_dim: positions})
         elif start_date is not None and end_date is not None:
             start_ts = pd.Timestamp(start_date)
             end_ts = pd.Timestamp(end_date) + pd.Timedelta(days=1)
             mask = (time_index >= start_ts) & (time_index < end_ts)
             if not mask.any():
                 return np.full((0, lons.shape[0]), np.nan, dtype="float64")
-            arr = arr.sel({time_dim: arr[time_dim].values[mask]})
+            positions = np.flatnonzero(mask)
+            selected_times = time_index[positions]
+            positions = positions[~selected_times.duplicated()]
+            arr = arr.isel({time_dim: positions})
 
     lon_dim = next((name for name in ["longitude", "lon", "x"] if name in arr.dims), None)
     lat_dim = next((name for name in ["latitude", "lat", "y"] if name in arr.dims), None)
@@ -518,6 +524,100 @@ def _flood_paths_by_week_start(
     return by_week
 
 
+def _flood_depth_paths_by_week_start(raw_root: Path, iso3: str, week_starts: list[date]) -> dict[date, list[Path]]:
+    root = raw_root / "flood_depth" / iso3
+    by_week: dict[date, list[Path]] = {week_start: [] for week_start in week_starts}
+    if not root.exists():
+        return by_week
+
+    static_paths = sorted(root.glob("*static*.tif")) + sorted(root.glob("*scenario*.tif"))
+    for week_start in week_starts:
+        by_week[week_start].extend(static_paths)
+
+    for tif in sorted(root.glob("*.tif")):
+        stem = tif.stem
+        for week_start in week_starts:
+            iso_token = week_start.isoformat()
+            underscore_token = _week_token(week_start)
+            if iso_token in stem or underscore_token in stem:
+                by_week[week_start].append(tif)
+    return {week_start: sorted(set(paths)) for week_start, paths in by_week.items()}
+
+
+def _visibility_values_m(series: pd.Series) -> pd.Series:
+    values = series.astype("string").str.extract(r"^(\d+)")[0].pipe(pd.to_numeric, errors="coerce")
+    values = values.where(values < 999999)
+    return values.astype("float64")
+
+
+def _sample_noaa_visibility_weekly_min_m(
+    raw_root: Path,
+    iso3: str,
+    probe_points_wgs84: gpd.GeoSeries,
+    *,
+    week_start: date,
+    week_end: date,
+) -> np.ndarray:
+    root = raw_root / "visibility_noaa_isd" / iso3
+    station_path = root / "stations.csv"
+    if not station_path.exists():
+        return np.full(len(probe_points_wgs84), np.nan, dtype="float64")
+
+    stations = pd.read_csv(station_path)
+    if stations.empty or not {"station_id", "lat_num", "lon_num"}.issubset(stations.columns):
+        return np.full(len(probe_points_wgs84), np.nan, dtype="float64")
+
+    week_start_ts = pd.Timestamp(week_start)
+    week_end_ts = pd.Timestamp(week_end) + pd.Timedelta(days=1)
+    rows: list[dict[str, float]] = []
+    for station in stations.itertuples(index=False):
+        station_id = str(getattr(station, "station_id"))
+        station_values: list[pd.Series] = []
+        for csv_path in sorted((root / str(week_start.year)).glob(f"{station_id}.csv")) + sorted(
+            (root / str(week_end.year)).glob(f"{station_id}.csv")
+        ):
+            try:
+                frame = pd.read_csv(csv_path, usecols=["DATE", "VIS"])
+            except Exception:
+                continue
+            frame["DATE"] = pd.to_datetime(frame["DATE"], errors="coerce", utc=True).dt.tz_convert(None)
+            frame["visibility_m"] = _visibility_values_m(frame["VIS"])
+            in_week = frame.loc[(frame["DATE"] >= week_start_ts) & (frame["DATE"] < week_end_ts), "visibility_m"].dropna()
+            if not in_week.empty:
+                station_values.append(in_week)
+        if not station_values:
+            continue
+        values = pd.concat(station_values, ignore_index=True)
+        if values.empty:
+            continue
+        rows.append(
+            {
+                "lat": float(getattr(station, "lat_num")),
+                "lon": float(getattr(station, "lon_num")),
+                "visibility_m": float(values.min()),
+            }
+        )
+
+    if not rows:
+        return np.full(len(probe_points_wgs84), np.nan, dtype="float64")
+
+    station_lons = np.asarray([row["lon"] for row in rows], dtype="float64")
+    station_lats = np.asarray([row["lat"] for row in rows], dtype="float64")
+    station_vis = np.asarray([row["visibility_m"] for row in rows], dtype="float64")
+    probe_lons = np.asarray([geom.x for geom in probe_points_wgs84], dtype="float64")
+    probe_lats = np.asarray([geom.y for geom in probe_points_wgs84], dtype="float64")
+    distances = (probe_lons.reshape(-1, 1) - station_lons.reshape(1, -1)) ** 2 + (
+        probe_lats.reshape(-1, 1) - station_lats.reshape(1, -1)
+    ) ** 2
+    nearest = np.nanargmin(distances, axis=1)
+    return station_vis[nearest]
+
+
+def _local_percentile(values: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce")
+    return numeric.rank(method="average", pct=True) * 100.0
+
+
 def _layer_stats(frame: gpd.GeoDataFrame, layer_columns: list[str]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     n_total = int(len(frame))
@@ -612,6 +712,26 @@ def main() -> None:
         roads[col] = roads[col].fillna(0.0)
         layer_columns.append(col)
 
+    flood_depth_by_week = _flood_depth_paths_by_week_start(raw_root, iso3, week_starts)
+    for week_start in week_starts:
+        week_end = _week_end(week_start, end_date, step_days)
+        col = f"flood_depth_week_{_week_token(week_start)}_max_m"
+        roads[col] = _sample_raster_paths(flood_depth_by_week.get(week_start, []), probe_points, reducer="max", positive_only=True)
+        layer_columns.append(col)
+
+    if datasets_cfg.get("visibility_noaa_isd", {}).get("enabled", True):
+        for week_start in week_starts:
+            week_end = _week_end(week_start, end_date, step_days)
+            col = f"visibility_week_{_week_token(week_start)}_min_m"
+            roads[col] = _sample_noaa_visibility_weekly_min_m(
+                raw_root,
+                iso3,
+                probe_points,
+                week_start=week_start,
+                week_end=week_end,
+            )
+            layer_columns.append(col)
+
     if datasets_cfg.get("landslide_susceptibility", {}).get("enabled", True):
         landslide_path = raw_root / "landslide_susceptibility" / "global" / f"nasa_landslide_susceptibility_{iso3.lower()}.tif"
         if not landslide_path.exists():
@@ -686,6 +806,14 @@ def main() -> None:
                             reducer=reducer,
                         )
                         layer_columns.append(col)
+                        if var == "skt" and reducer == "max":
+                            pavement_col = f"pavement_surface_temperature_week_{token}_max_c"
+                            roads[pavement_col] = pd.to_numeric(roads[col], errors="coerce") - 273.15
+                            layer_columns.append(pavement_col)
+                        if var == "swvl1" and reducer == "mean":
+                            percentile_col = f"soil_moisture_week_{token}_local_percentile"
+                            roads[percentile_col] = _local_percentile(roads[col])
+                            layer_columns.append(percentile_col)
                 for reducer in ("mean", "max"):
                     col = f"era5_wind_speed_week_{token}_{reducer}"
                     roads[col] = _sample_netcdf_wind_speed(
@@ -706,6 +834,9 @@ def main() -> None:
                     end_date=week_end,
                 )
                 layer_columns.append(tp_1h_col)
+                erosion_pct_col = f"unpaved_erosion_rainfall_week_{token}_local_percentile"
+                roads[erosion_pct_col] = _local_percentile(roads[tp_1h_col])
+                layer_columns.append(erosion_pct_col)
 
                 tp_daily_sum_max_col = f"era5_tp_daily_sum_max_week_{token}_mm"
                 roads[tp_daily_sum_max_col] = _sample_era5_tp_daily_sum_weekly_max_mm(

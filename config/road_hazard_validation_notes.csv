@@ -1,0 +1,7 @@
+check,status,note
+unit compatibility,pass,"Rainfall intensity thresholds are only mm/h. Weekly CHIRPS is demoted to antecedent/context. Flood depth curves require m/cm depth, not binary extent."
+temporal compatibility,pass,Event/hourly/daily variables separated from weekly/seasonal modifiers.
+flood semantics,pass,GFM is mapped to binary/likelihood closure proxy; depth fragility requires depth raster or depth-estimation workflow.
+road type split,pass,Each hazard has paved/unpaved rows with different assumptions and metrics.
+wind/dust coverage,pass,Wind and dust rows added. Dust uses visibility as primary variable and CAMS PM/AOD only as calibrated proxy.
+threshold confidence,partial,Hard numeric values are kept only when source-backed or explicitly marked approximation/local calibration.

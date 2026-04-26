@@ -1,248 +1,302 @@
 road_hazard_impact_curves:
-  version: 0.1
-  status: provisional_audited_anchors
-  source_documents:
-    primary_note: "/Users/gk/Downloads/Continuous impact curves for climate hazards on equatorial plantation logistics roads.pdf"
-    audit_note: "/Users/gk/Documents/thr_audt.pdf"
-  note: >
-    Provisional road-physics anchor values for continuous climate-hazard impact
-    curves on plantation logistics roads. These values are not crop-specific.
-    Crop types should be differentiated later in the consequence layer after
-    road speed loss, delay, or closure has been estimated.
-
-  curve_contract:
-    impact_index_points:
-      no_impact: 0.0
-      speed_loss_onset: 0.08
-      partial_damage_onset: 0.45
-      unusable_or_closure: 1.0
-    recommended_interpolator: pchip_monotone
-    interpretation: >
-      Fit a monotone continuous curve through the listed anchor points. Use
-      impact_index as the road damage / serviceability severity index. Speed
-      penalties and crop losses should be derived downstream rather than by
-      moving these physical thresholds by crop.
-
-  transferability_rules:
-    crop_types:
-      physical_thresholds: shared
-      crop_specific_layer: consequence_after_road_impact
-      note: >
-        Tomato, banana, mango, and other crops should keep the same physical
-        road hazard curves. Later crop-specific modelling should adjust delay
-        sensitivity, quality loss, spoilage, and economic penalty curves.
-    vehicle_class:
-      freight_baseline: hgv_high_sided_lorry
-      note: >
-        Use heavy/high-sided freight vehicles as the conservative accessibility
-        baseline. Do not use emergency-vehicle flood thresholds as normal
-        plantation freight passability thresholds.
-    surface:
-      paved_vs_unpaved: separate_anchor_sets_where_supported
-      note: >
-        Rainfall/runoff anchors may shift left for unpaved roads. Heat distress
-        is more relevant for paved asphalt, especially near hubs and yards.
-
-  hazards:
-    landslide_rainfall_24h:
-      enabled_condition: susceptible_slopes_only
-      factor_contract: landslide_susceptibility_plus_24h_rainfall
-      intensity_variable: rainfall_24h_on_susceptible_slopes
-      units: mm_per_24h
-      direction: gte
-      anchors:
-        no_impact: 0.0
-        speed_loss_onset: 140.0
-        partial_damage_onset: 250.0
-        unusable_or_closure: 300.0
-      uncertainty:
-        speed_loss_onset: [130.0, 150.0]
-        partial_damage_onset: [250.0, 260.0]
-        unusable_or_closure: [300.0, 350.0]
-      confidence: high_for_steep_or_cut_slope_roads
-      audit_status: use_as_landslide_probability_or_blockage_proxy
-      caveats:
-        - Rainfall thresholds are not direct road-damage thresholds.
-        - Use only where slope susceptibility is real; switch off on flat floodplain plantation roads.
-
-    extreme_rainfall_paved:
-      factor_contract: short_duration_rain_intensity
-      intensity_variable: rainfall_intensity
-      units: mm_per_hour
-      direction: gte
-      surface_scope: paved
-      anchors:
-        no_impact: 0.0
-        speed_loss_onset: 6.35
-        partial_damage_onset: 20.0
-        unusable_or_closure: 78.8
-      confidence: medium
-      audit_status: keep_as_anchor_not_universal_closure
-      caveats:
-        - 6.35 mm/h supports speed and capacity reduction, not road destruction.
-        - 78.8 mm/h is a drainage/design exceedance proxy and should not be treated as universal.
-
-    extreme_rainfall_unpaved:
-      factor_contract: short_duration_rain_intensity_or_event_depth_plus_slope_soil
-      intensity_variable: rainfall_intensity
-      units: mm_per_hour
-      direction: gte
-      surface_scope: unpaved
-      anchors:
-        no_impact: 0.0
-        speed_loss_onset: 5.0
-        partial_damage_onset: 10.0
-        unusable_or_closure: 134.0
-      alternate_event_depth_anchors:
-        runoff_onset_event_depth_mm: [3.0, 6.0]
-        erosion_event_depth_mm: 10.0
-      confidence: medium
-      audit_status: keep_as_runoff_and_erosion_proxy
-      caveats:
-        - Unpaved-road damage depends strongly on slope, soil, drainage, and traffic loading.
-        - The severe erosion domain comes from tested high-intensity rainfall, not a universal closure threshold.
-
-    flood_depth:
-      factor_contract: flood_weekly
-      intensity_variable: standing_water_depth_on_road
-      units: m
-      direction: gte
-      anchors:
-        no_impact: 0.0
-        speed_loss_onset: 0.01
-        partial_damage_onset: 0.10
-        unusable_or_closure: 0.30
-      support_points:
-        - depth_m: 0.20
-          impact_index: 0.60
-          note: Pregnolato-style speed-depth curve support point, not a hard closure threshold.
-      closure_reference:
-        passenger_vehicle_m: 0.30
-        emergency_vehicle_m: 0.60
-        agency_conservative_option_m: 0.20
-      confidence: high_for_operations_medium_for_structural_damage
-      audit_status: primary_continuous_curve_for_flood_speed
-      caveats:
-        - Use Pregnolato speed-depth curve for continuous speed loss where possible.
-        - Treat 0.30 m as conservative passenger-vehicle closure; 0.20 m may be an agency rule, not the main curve.
-        - Structural damage depends strongly on inundation duration, not depth alone.
-
-    extreme_heat_pavement:
-      factor_contract: pavement_surface_temperature
-      intensity_variable: pavement_surface_temperature
-      units: celsius
-      direction: gte
-      anchors:
-        no_impact: 20.0
-        speed_loss_onset: 45.0
-        partial_damage_onset: 50.0
-        unusable_or_closure: 65.0
-      uncertainty:
-        speed_loss_onset: [45.0, 50.0]
-        partial_damage_onset: [50.0, 58.0]
-        unusable_or_closure: [60.0, 75.0]
-      ambient_to_surface_modifier:
-        urban_pavement_surface_delta_c: [15.0, 25.0]
-        ambient_gt_40c_surface_range_c: [65.0, 75.0]
-      confidence: medium
-      audit_status: damage_layer_only_not_direct_speed_threshold
-      caveats:
-        - Do not claim that pavement temperature above 50 C directly slows traffic.
-        - Feed air temperature through a pavement-surface transform before using this curve.
-
-    drought_expansive_subgrade:
-      enabled_condition: expansive_clay_subgrade_only
-      factor_contract: matric_suction_or_soil_moisture_proxy
-      intensity_variable: matric_suction
-      units: kpa
-      direction: gte
-      anchors:
-        no_impact: 0.0
-        speed_loss_onset: 700.0
-        partial_damage_onset: 1500.0
-        unusable_or_closure: 2250.0
-      uncertainty:
-        unusable_or_closure: [2000.0, 2500.0]
-      auxiliary_anchor:
-        moisture_content_below_percent: 15.0
-        duration_gt_months: 1.0
-      confidence: low_to_medium
-      audit_status: subgrade_cracking_proxy_only
-      caveats:
-        - Drought speed reduction is not source-backed as a direct traffic threshold.
-        - For unpaved roads, model operational speed loss through dust or roughness after damage.
-
-    dust_visibility:
-      factor_contract: visibility_or_dust_proxy
-      intensity_variable: visibility
-      units: m
-      direction: lte
-      anchors:
-        no_impact: 10000.0
-        speed_loss_onset: 1000.0
-        partial_damage_onset: 500.0
-        unusable_or_closure: 50.0
-      support_points:
-        - visibility_m: 500.0
-          speed_reduction_fraction: 0.061
-      confidence: high_for_closure_low_for_structural_damage
-      audit_status: visibility_to_speed_not_road_damage
-      caveats:
-        - Use for operational closure and speed loss.
-        - Road damage should only be modelled as sand deposition, skid loss, or burial proxy where locally plausible.
-
-    wind_crosswind:
-      factor_contract: crosswind_or_gust_speed
-      intensity_variable: crosswind_or_gust_speed
-      units: m_per_s
-      direction: gte
-      anchors:
-        no_impact: 0.0
-        speed_loss_onset: 20.0
-        partial_damage_onset: 30.0
-        unusable_or_closure: 45.0
-      uncertainty:
-        partial_damage_onset: [23.0, 45.0]
-        unusable_or_closure: [42.0, 45.0]
-      confidence: high_for_operational_closure_low_for_pavement_damage
-      audit_status: vehicle_restriction_and_indirect_blockage_only
-      caveats:
-        - Do not describe 42 m/s as direct road destruction.
-        - Treefall around 42 m/s is contested and should be a weak blockage proxy only.
-
-    urban_runoff:
-      recommended_handling: rainfall_to_hydraulic_model_to_flood_depth
-      factor_contract: pluvial_model_output_preferred
-      intensity_variable: urban_pluvial_rainfall_intensity
-      units: mm_per_hour
-      direction: gte
-      anchors:
-        no_impact: 0.0
-        speed_loss_onset: 20.0
-        partial_damage_onset: null
-        unusable_or_closure: null
-      non_transferable_reference_values:
-        hamburg_100y_event_mm_per_hour: 36.0
-        taipei_drainage_design_mm_per_hour: 78.8
-      confidence: low_as_direct_threshold_medium_as_compound_hazard
-      audit_status: do_not_use_as_universal_threshold
-      caveats:
-        - Prefer rainfall -> hydraulic model -> flood depth -> Pregnolato/Kramer.
-        - Keep 36 mm/h and 78.8 mm/h as scenario/design references only.
-
-  crop_specific_consequence_placeholders:
-    status: intentionally_not_calibrated
-    note: >
-      Future crop-specific values belong here or in a sibling crop-loss config.
-      These should change loss/delay sensitivity, not the road hazard anchors
-      above.
-    crop_types:
-      tomato:
-        delay_sensitivity: todo
-        quality_loss_curve: todo
-      banana:
-        delay_sensitivity: todo
-        quality_loss_curve: todo
-      mango:
-        delay_sensitivity: todo
-        quality_loss_curve: todo
+  version: 1.0
+  status: rebuilt_from_road_hazard_mapping_rebuilt_workbook
+  authoritative_source:
+    workbook: config/road_hazard_mapping_rebuilt.xlsx
+    primary_sheet: Mapping_Rebuilt
+    all_sheets_exported:
+      Mapping_Rebuilt: config/road_hazard_mapping_rebuilt.csv
+      Source_Key: config/road_hazard_source_key.csv
+      Validation_Notes: config/road_hazard_validation_notes.csv
+      Original_Audit: config/road_hazard_original_audit.csv
+  note: This file is generated from Mapping_Rebuilt and replaces the older PDF/audit-derived road-hazard anchors. Use the
+    source_reference and Source_Key sheet from the workbook for citations.
+  validation_notes:
+  - check: unit compatibility
+    status: pass
+    note: Rainfall intensity thresholds are only mm/h. Weekly CHIRPS is demoted to antecedent/context. Flood depth curves
+      require m/cm depth, not binary extent.
+  - check: temporal compatibility
+    status: pass
+    note: Event/hourly/daily variables separated from weekly/seasonal modifiers.
+  - check: flood semantics
+    status: pass
+    note: GFM is mapped to binary/likelihood closure proxy; depth fragility requires depth raster or depth-estimation workflow.
+  - check: road type split
+    status: pass
+    note: Each hazard has paved/unpaved rows with different assumptions and metrics.
+  - check: wind/dust coverage
+    status: pass
+    note: Wind and dust rows added. Dust uses visibility as primary variable and CAMS PM/AOD only as calibrated proxy.
+  - check: threshold confidence
+    status: partial
+    note: Hard numeric values are kept only when source-backed or explicitly marked approximation/local calibration.
+  source_key:
+  - source_key: S1_Koks_2019_Nature
+    url: https://www.nature.com/articles/s41467-019-10442-3
+  - source_key: S1b_Koks_2019_supplement
+    url: https://static-content.springer.com/esm/art%3A10.1038%2Fs41467-019-10442-3/MediaObjects/41467_2019_10442_MOESM1_ESM.pdf
+  - source_key: S2_CHIRPS_daily
+    url: https://developers.google.com/earth-engine/datasets/catalog/UCSB-CHG_CHIRPS_DAILY
+  - source_key: S3_ERA5_Land
+    url: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land
+  - source_key: S4_Pregnolato_2017_flood_depth_disruption
+    url: https://www.sciencedirect.com/science/article/pii/S1361920916308367
+  - source_key: S5_Kramer_2016_inundated_roads
+    url: https://deltaexpertise.nl/images/f/f2/Kramer_2016_Safety_criteria_for_the_trafficability_of_inundated_roads_in_urban.pdf
+  - source_key: S6_Copernicus_GFM_manual
+    url: https://extwiki.eodc.eu/gfm_assets/gfm4.0_pum_2025.pdf
+  - source_key: S7_Betterle_2024_flood_depth_from_extent
+    url: https://nhess.copernicus.org/articles/24/2817/2024/
+  - source_key: S8_Tsapakis_2013_weather_travel_time
+    url: https://www.sciencedirect.com/science/article/pii/S0966692312002694
+  - source_key: S9_Chung_2012_weather_capacity
+    url: https://www.sciencedirect.com/science/article/abs/pii/S0967070X11001144
+  - source_key: S10_FHWA_pavement_resilience
+    url: https://www.fhwa.dot.gov/pavement/concrete/pubs/hif23006.pdf
+  - source_key: S11_FAO_drainage_design
+    url: https://www.fao.org/4/t0099e/t0099e04.htm
+  - source_key: S12_FAO_protective_measures
+    url: https://www.fao.org/4/T0099E/T0099e01.htm
+  - source_key: S13_UNEP_WMO_dust_assessment
+    url: https://wesr.unep.org/media/docs/assessments/global_assessment_of_sand_and_dust_stormsx.pdf
+  - source_key: S14_UNDRR_dust_sandstorm_limits
+    url: https://www.undrr.org/understanding-disaster-risk/terminology/hips/mh0201
+  - source_key: S15_Unpaved_road_erosion_2024
+    url: https://bioone.org/journals/air-soil-and-water-research/volume-17/issue-1/11786221241272396/Erosion-Mechanisms-in-Unpaved-Roads--Effects-of-Slope-Rainfall/10.1177/11786221241272396.full
+  mapping_rows:
+  - hazard_type: extreme_rainfall_operational
+    road_type: paved
+    raw_input: CHIRPS daily precipitation, ERA5/IMERG/hourly precipitation if available; weekly CHIRPS only as antecedent
+      wetness/context.
+    derived_variable: event rainfall intensity I_event; if only CHIRPS daily is available, use P_max_daily and an explicitly
+      calibrated storm-duration proxy I_proxy=P_max_daily/tau_event.
+    unit: mm/h preferred; mm/day only for daily proxy
+    temporal_scale: event or daily maximum; do not use weekly sum as intensity
+    curve_type: piecewise/logistic operational penalty
+    onset_value: 6.35 mm/h for heavy-rain operational effect; mark as external operational threshold, not structural failure.
+    saturation_value: 20–30 mm/h approximation for strong operational degradation; cap by local calibration unless flood depth
+      is modeled.
+    impact_metrics: speed_reduction_pct; capacity_reduction_pct; travel_time_multiplier
+    assumptions: No direct asset damage from rain intensity alone on paved roads unless drainage/flooding/erosion is also
+      represented. Weekly mm/week must not trigger mm/h thresholds.
+    source_reference: 'S2_CHIRPS_daily: https://developers.google.com/earth-engine/datasets/catalog/UCSB-CHG_CHIRPS_DAILY;
+      S8_Tsapakis_2013_weather_travel_time: https://www.sciencedirect.com/science/article/pii/S0966692312002694; S9_Chung_2012_weather_capacity:
+      https://www.sciencedirect.com/science/article/abs/pii/S0967070X11001144'
+    confidence_level: medium for operational speed/capacity; low for direct damage
+  - hazard_type: extreme_rainfall_erosion
+    road_type: unpaved
+    raw_input: CHIRPS daily precipitation or hourly/event rainfall; road surface class; slope; soil/erodibility; drainage;
+      traffic loading; antecedent soil moisture.
+    derived_variable: unpaved erosion/impassability index = f(I_event or P_max_daily, slope, erodibility, drainage, traffic,
+      soil moisture).
+    unit: dimensionless index; component rainfall in mm/h or mm/day
+    temporal_scale: event shock plus 1–7 day recovery window
+    curve_type: continuous degradation; logistic closure probability only after local calibration
+    onset_value: local P75–P90 event rainfall or any post-dry-season rainfall when surface is loose; no universal hard threshold.
+    saturation_value: local P99–P99.9 event rainfall or observed washout/closure events; do not hard-code 3–10 mm event thresholds
+      without field validation.
+    impact_metrics: speed_reduction_pct; vibration_index; damage_ratio_pct; road_closure_probability; recovery_days
+    assumptions: Unpaved damage is controlled by rainfall intensity plus slope, soil, drainage and traffic. Use weekly rainfall
+      only for antecedent wetness, not event severity.
+    source_reference: 'S2_CHIRPS_daily: https://developers.google.com/earth-engine/datasets/catalog/UCSB-CHG_CHIRPS_DAILY;
+      S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm; S12_FAO_protective_measures: https://www.fao.org/4/T0099E/T0099e01.htm;
+      S15_Unpaved_road_erosion_2024: https://bioone.org/journals/air-soil-and-water-research/volume-17/issue-1/11786221241272396/Erosion-Mechanisms-in-Unpaved-Roads--Effects-of-Slope-Rainfall/10.1177/11786221241272396.full'
+    confidence_level: low-medium; requires local calibration
+  - hazard_type: flood_depth
+    road_type: paved
+    raw_input: Hydraulic flood-depth raster or DEM-derived depth product; GFM flood extent alone is not sufficient for this
+      row.
+    derived_variable: standing water depth on/around road segment.
+    unit: m
+    temporal_scale: event depth plus duration/recession
+    curve_type: 'hybrid: depth-disruption speed curve plus depth-damage fragility curve'
+    onset_value: operational speed penalty can begin with shallow water; use 0.25 m as direct-damage/hazard-band onset from
+      Koks hazard classes; 0.30 m as passenger-car closure/safety criterion if adopted.
+    saturation_value: 1.5 m is the upper calibration range in Koks Supplementary Fig. 2 fragility curves; >2.0 m is extreme
+      flood class.
+    impact_metrics: speed_reduction_pct; road_closure_probability; damage_ratio_pct; recovery_days
+    assumptions: Separate operational closure from asset damage. Pregnolato-type curves are for speed/disruption; Koks/Espinet-type
+      fragility is for direct damage.
+    source_reference: 'S1_Koks_2019_Nature: https://www.nature.com/articles/s41467-019-10442-3; S1b_Koks_2019_supplement:
+      https://static-content.springer.com/esm/art%3A10.1038%2Fs41467-019-10442-3/MediaObjects/41467_2019_10442_MOESM1_ESM.pdf;
+      S4_Pregnolato_2017_flood_depth_disruption: https://www.sciencedirect.com/science/article/pii/S1361920916308367; S5_Kramer_2016_inundated_roads:
+      https://deltaexpertise.nl/images/f/f2/Kramer_2016_Safety_criteria_for_the_trafficability_of_inundated_roads_in_urban.pdf'
+    confidence_level: high for variable choice; medium for transferable curve values
+  - hazard_type: flood_depth
+    road_type: unpaved
+    raw_input: Hydraulic flood-depth raster or DEM-derived depth product plus unpaved surface/drainage/soil class.
+    derived_variable: standing water depth combined with unpaved-road vulnerability modifier.
+    unit: m
+    temporal_scale: event depth, duration, and post-event recovery
+    curve_type: linear/convex fragility with stronger sensitivity than paved; closure probability during inundation
+    onset_value: 0.25 m damage/hazard-band onset; 0.30 m passenger-car closure/safety criterion; lower local thresholds may
+      apply for washouts/low-water crossings.
+    saturation_value: 1.5 m fragility upper calibration; >2.0 m extreme flood class; recovery saturation should be local.
+    impact_metrics: road_closure_probability; damage_ratio_pct; speed_reduction_pct; recovery_days; vibration_index after
+      reopening
+    assumptions: Unpaved roads need road-type-specific fragility and a recovery delay; never apply paved-road fragility unchanged.
+    source_reference: 'S1_Koks_2019_Nature: https://www.nature.com/articles/s41467-019-10442-3; S1b_Koks_2019_supplement:
+      https://static-content.springer.com/esm/art%3A10.1038%2Fs41467-019-10442-3/MediaObjects/41467_2019_10442_MOESM1_ESM.pdf;
+      S4_Pregnolato_2017_flood_depth_disruption: https://www.sciencedirect.com/science/article/pii/S1361920916308367; S11_FAO_drainage_design:
+      https://www.fao.org/4/t0099e/t0099e04.htm'
+    confidence_level: medium; local calibration needed
+  - hazard_type: flood_extent_binary_proxy
+    road_type: paved
+    raw_input: Copernicus GFM Observed Flood Extent, Maximum Flood Extent, likelihood values, exclusion mask.
+    derived_variable: flood_presence_on_edge or flooded_edge_fraction; optional likelihood-weighted closure probability.
+    unit: 0/1, fraction, or 0–100 likelihood
+    temporal_scale: satellite overpass/event composite; weekly aggregation only as event presence flag
+    curve_type: probabilistic operational closure proxy; not a depth-damage curve
+    onset_value: GFM positive flood pixel intersecting road edge, preferably with likelihood and flooded fraction threshold.
+    saturation_value: edge fraction flooded >= local threshold or likelihood >=80; no physical depth saturation without depth
+      data.
+    impact_metrics: road_closure_probability; reliability_penalty; optional recovery_days
+    assumptions: Use only as binary/likelihood closure proxy. Do not compute damage_ratio_pct from extent without depth, duration
+      and asset vulnerability.
+    source_reference: 'S6_Copernicus_GFM_manual: https://extwiki.eodc.eu/gfm_assets/gfm4.0_pum_2025.pdf; S7_Betterle_2024_flood_depth_from_extent:
+      https://nhess.copernicus.org/articles/24/2817/2024/'
+    confidence_level: medium for closure flag; low for damage
+  - hazard_type: flood_extent_binary_proxy
+    road_type: unpaved
+    raw_input: Copernicus GFM Observed Flood Extent/likelihood plus unpaved surface class and drainage/soil mask.
+    derived_variable: flood_presence_on_edge with unpaved vulnerability and recovery multiplier.
+    unit: 0/1, fraction, or 0–100 likelihood
+    temporal_scale: event composite plus recovery window
+    curve_type: probabilistic closure plus post-event degradation modifier
+    onset_value: GFM positive flood pixel intersecting edge; use lower flooded-fraction threshold for low-water crossings
+      if locally validated.
+    saturation_value: not defined physically without depth; use observed closures or depth-estimation product to calibrate.
+    impact_metrics: road_closure_probability; recovery_days; vibration_index; damage_flag
+    assumptions: Binary extent is useful for operational access but cannot replace flood-depth fragility. Unpaved recovery
+      should persist after flood recedes.
+    source_reference: 'S6_Copernicus_GFM_manual: https://extwiki.eodc.eu/gfm_assets/gfm4.0_pum_2025.pdf; S7_Betterle_2024_flood_depth_from_extent:
+      https://nhess.copernicus.org/articles/24/2817/2024/; S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm'
+    confidence_level: low-medium
+  - hazard_type: heat_pavement
+    road_type: paved
+    raw_input: ERA5-Land skin temperature or air temperature; ideally measured/modelled pavement surface temperature and asphalt
+      binder PG.
+    derived_variable: pavement temperature proxy T_pavement_surface and heatwave duration.
+    unit: °C
+    temporal_scale: daily maximum and multi-day heatwave exposure
+    curve_type: continuous cumulative degradation; no immediate binary closure threshold
+    onset_value: 45°C diagnostic onset if using pavement/skin temperature proxy; do not use as traffic-speed threshold.
+    saturation_value: 60–65°C severe rutting/softening risk proxy or local binder PG high-temperature limit; approximation,
+      not universal.
+    impact_metrics: damage_ratio_pct; rutting_risk_index; maintenance_cost_proxy; optional speed penalty only during work
+      restrictions/incidents
+    assumptions: Heat affects paved roads through rutting, aging, material stiffness and service life, not automatic speed
+      loss. Air temperature and skin/pavement temperature are not interchangeable.
+    source_reference: 'S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land; S10_FHWA_pavement_resilience:
+      https://www.fhwa.dot.gov/pavement/concrete/pubs/hif23006.pdf'
+    confidence_level: medium for process; low-medium for numeric proxy values
+  - hazard_type: heat_dryness
+    road_type: unpaved
+    raw_input: ERA5-Land air/skin temperature, soil moisture, wind, surface type, traffic.
+    derived_variable: dry-hot roughness/dust index = f(T_max anomaly, low soil moisture, wind, traffic).
+    unit: dimensionless index
+    temporal_scale: multi-day to seasonal exposure
+    curve_type: continuous degradation and dust activation modifier
+    onset_value: local T_max P90 combined with soil moisture below P20; no universal heat-only threshold.
+    saturation_value: local T_max P99 plus soil moisture below P5 and/or observed high-dust periods.
+    impact_metrics: vibration_index; speed_reduction_pct; maintenance_cost_proxy; dust_risk_modifier
+    assumptions: Heat alone should not close unpaved roads; it amplifies drying, dust, loose surface, shrink-swell and roughness.
+    source_reference: 'S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land; S10_FHWA_pavement_resilience:
+      https://www.fhwa.dot.gov/pavement/concrete/pubs/hif23006.pdf; S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm'
+    confidence_level: low-medium
+  - hazard_type: wind_crosswind
+    road_type: paved
+    raw_input: ERA5/ERA5-Land 10 m wind components; preferably gusts and road bearing/orientation; tree density for blockage.
+    derived_variable: crosswind_gust = gust * abs(sin(wind_direction - road_bearing)); optional treefall_blockage_index.
+    unit: m/s
+    temporal_scale: hourly/event gust; weekly maxima only for exposure screening
+    curve_type: logistic operational restriction; separate treefall blockage threshold
+    onset_value: 20 m/s crosswind/gust as approximate high-sided-vehicle operational caution; must be local-road/vehicle calibrated.
+    saturation_value: 30–35 m/s for severe operational restriction approximation; 42 m/s treefall/cleanup proxy from Koks/Virot
+      only where trees are present.
+    impact_metrics: speed_reduction_pct; capacity_reduction_pct; road_closure_probability; blockage_probability
+    assumptions: Use gust and road orientation, not scalar weekly mean. Wind is operational/obstruction hazard, not pavement
+      damage.
+    source_reference: 'S1_Koks_2019_Nature: https://www.nature.com/articles/s41467-019-10442-3; S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land'
+    confidence_level: low-medium; local operational standards recommended
+  - hazard_type: wind_crosswind
+    road_type: unpaved
+    raw_input: ERA5/ERA5-Land gust/wind direction plus road bearing, bare-soil/dryness indicators, surface condition.
+    derived_variable: crosswind_gust plus wind_erosion_trigger when dry/loose surface is present.
+    unit: m/s
+    temporal_scale: hourly/event; dry-season cumulative modifier
+    curve_type: 'hybrid: operational crosswind penalty plus dust/erosion trigger'
+    onset_value: 20 m/s for crosswind operation; 4–10 m/s can trigger dust emission in desert/semi-arid surfaces when dry/loose.
+    saturation_value: 30–35 m/s severe operational restriction approximation; dust severity handled by visibility/dust row.
+    impact_metrics: speed_reduction_pct; reliability_penalty; dust_risk_modifier; vibration_index
+    assumptions: For Namibia-style arid roads, wind often matters via dust and loose surface before pure crosswind closure
+      thresholds are reached.
+    source_reference: 'S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land; S13_UNEP_WMO_dust_assessment:
+      https://wesr.unep.org/media/docs/assessments/global_assessment_of_sand_and_dust_stormsx.pdf; S14_UNDRR_dust_sandstorm_limits:
+      https://www.undrr.org/understanding-disaster-risk/terminology/hips/mh0201'
+    confidence_level: low-medium
+  - hazard_type: dust_visibility
+    road_type: paved
+    raw_input: Measured visibility preferred; CAMS PM10/PM2.5/dust AOD plus wind/dryness only as calibrated proxy.
+    derived_variable: visibility_m or calibrated dust_visibility_index.
+    unit: m or dimensionless index
+    temporal_scale: 3-hourly/hourly event; not weekly mean
+    curve_type: logistic speed/capacity penalty; closure probability under very low visibility
+    onset_value: visibility <3000 m with gust >=20 kt light SDS; or <1000 m sand/dust storm class.
+    saturation_value: visibility <500 m heavy/severe SDS; <50–200 m can be emergency closure depending on local rule.
+    impact_metrics: speed_reduction_pct; capacity_reduction_pct; road_closure_probability; crash_risk_proxy
+    assumptions: PM/AOD is not visibility. Use PM/AOD only after calibration against visibility or observed road disruptions.
+    source_reference: 'S13_UNEP_WMO_dust_assessment: https://wesr.unep.org/media/docs/assessments/global_assessment_of_sand_and_dust_stormsx.pdf;
+      S14_UNDRR_dust_sandstorm_limits: https://www.undrr.org/understanding-disaster-risk/terminology/hips/mh0201'
+    confidence_level: medium if visibility exists; low for PM/AOD proxy
+  - hazard_type: dust_visibility_surface_wear
+    road_type: unpaved
+    raw_input: Visibility product or calibrated CAMS dust proxy; ERA5 wind; soil moisture; road surface/bare-soil mask; traffic.
+    derived_variable: dust_visibility_index plus surface_wear/roughness modifier.
+    unit: m for visibility; dimensionless for wear index
+    temporal_scale: event for visibility; seasonal cumulative exposure for wear/roughness
+    curve_type: 'hybrid: event speed penalty plus cumulative roughness/vibration degradation'
+    onset_value: visibility <3000 m or <1000 m SDS class for operational speed; wind emission threshold 4–10 m/s when surface
+      is dry/loose.
+    saturation_value: visibility <500 m heavy/severe SDS for operational closure proxy; wear saturation should be calibrated
+      to maintenance/roughness data.
+    impact_metrics: speed_reduction_pct; road_closure_probability; vibration_index; maintenance_cost_proxy
+    assumptions: Dust affects operations through visibility and unpaved surfaces through deposition, abrasion, skid/loose
+      material and roughness; direct structural damage is not assumed.
+    source_reference: 'S13_UNEP_WMO_dust_assessment: https://wesr.unep.org/media/docs/assessments/global_assessment_of_sand_and_dust_stormsx.pdf;
+      S14_UNDRR_dust_sandstorm_limits: https://www.undrr.org/understanding-disaster-risk/terminology/hips/mh0201; S12_FAO_protective_measures:
+      https://www.fao.org/4/T0099E/T0099e01.htm'
+    confidence_level: low-medium
+  - hazard_type: soil_moisture_subgrade
+    road_type: paved
+    raw_input: ERA5-Land soil volumetric water content layers, precipitation history, drainage/subgrade and expansive-soil
+      mask.
+    derived_variable: soil_moisture_anomaly percentile; optional suction only if pedotransfer function and soil type are available.
+    unit: m3/m3 or percentile; kPa only after validated transform
+    temporal_scale: daily-weekly antecedent state and recovery period
+    curve_type: context modifier for heat/rain/flood damage; not standalone speed curve
+    onset_value: 'wet weakening: local soil moisture >P90; drought shrinkage: <P10; thresholds are local percentiles.'
+    saturation_value: '>P99 wetness or <P1 drought anomaly; local calibration required.'
+    impact_metrics: damage_modifier; recovery_days; rutting/subgrade_weakening_index
+    assumptions: Do not equate volumetric water content with matric suction in kPa. Use as modifier unless soil transform
+      is validated.
+    source_reference: 'S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land; S10_FHWA_pavement_resilience:
+      https://www.fhwa.dot.gov/pavement/concrete/pubs/hif23006.pdf; S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm'
+    confidence_level: low-medium
+  - hazard_type: soil_moisture_surface_condition
+    road_type: unpaved
+    raw_input: ERA5-Land soil moisture, CHIRPS daily rainfall, road surface, traffic, slope and drainage.
+    derived_variable: bearing-loss/roughness index for wet periods; dryness/dust activation modifier for dry periods.
+    unit: m3/m3 percentile or dimensionless index
+    temporal_scale: daily-weekly; recovery after rain/flood
+    curve_type: continuous modifier; no standalone universal threshold
+    onset_value: 'wet: >P75–P90 local soil moisture after rain; dry/dust: <P20 with wind exposure.'
+    saturation_value: 'wet: >P95–P99 with observed impassability; dry: <P5 with high wind/dust event.'
+    impact_metrics: speed_reduction_pct; road_closure_probability; vibration_index; recovery_days
+    assumptions: Use soil moisture to modulate rainfall and dust curves. It is not a direct closure trigger unless calibrated
+      to local road condition observations.
+    source_reference: 'S2_CHIRPS_daily: https://developers.google.com/earth-engine/datasets/catalog/UCSB-CHG_CHIRPS_DAILY;
+      S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land; S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm;
+      S12_FAO_protective_measures: https://www.fao.org/4/T0099E/T0099e01.htm'
+    confidence_level: low-medium

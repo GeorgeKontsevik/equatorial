@@ -1,51 +1,163 @@
 road_hazard_thresholds:
-  version: 0.1
-  status: provisional_24h_rain_surface_mar_may
-  source_config: config/road_hazard_impact_curves.yaml
-  note: >
-    Rain-only rerun using weekly maximum daily precipitation total:
-    `chirps_24h_max_weekly_mm` in mm/24h. This excludes ERA5 1-hour
-    rainfall intensity. Unpaved-road direct rain/runoff uses the audited
-    alternate event-depth anchors from the impact-curve config; paved-road
-    short-duration intensity thresholds are not included because they are
-    mm/h anchors, not 24h totals.
-
+  version: 1.0
+  status: superseded_by_road_hazard_mapping_rebuilt
+  source_workbook: config/road_hazard_mapping_rebuilt.xlsx
+  replacement_config: config/road_hazard_thresholds_exact_mar_may.yaml
+  note: The rebuilt workbook removed this old 24h road-failure scenario as an active universal road-hazard rule. Use the replacement
+    config generated from Mapping_Rebuilt instead.
   rules:
-    - factor: chirps_24h_max_weekly_mm
-      direction: gte
-      surface_scope: unpaved
-      thresholds:
-        minor: 6.0
-        moderate: 10.0
-        severe: null
-        catastrophic: null
-      effects:
-        minor:
-          speed_penalty_fraction: 0.05
-          closure_weeks: null
-        moderate:
-          speed_penalty_fraction: 0.15
-          closure_weeks: null
-
-    - factor: chirps_24h_max_weekly_mm
-      direction: gte
-      surface_scope: all
-      condition:
-        factor: landslide_susceptibility
-        operator: gte
-        value: 3.0
-      thresholds:
-        minor: 140.0
-        moderate: 250.0
-        severe: 300.0
-        catastrophic: null
-      effects:
-        minor:
-          speed_penalty_fraction: 0.05
-          closure_weeks: null
-        moderate:
-          speed_penalty_fraction: 0.15
-          closure_weeks: null
-        severe:
-          speed_penalty_fraction: null
-          closure_weeks: 1
+  - hazard: extreme_rainfall_operational
+    surface: paved
+    source_row: 'Mapping_Rebuilt: extreme_rainfall_operational/paved'
+    factor: era5_tp_1h_max_weekly_mm_per_h
+    direction: gte
+    surface_scope: paved
+    current_status: active_operational_speed_only
+    thresholds:
+      speed_reduction_1: 6.35
+      speed_reduction_2: 20.0
+      speed_reduction_3: 30.0
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+    effects:
+      speed_reduction_1:
+        speed_penalty_fraction: 0.07
+        closure_weeks: null
+      speed_reduction_2:
+        speed_penalty_fraction: 0.2
+        closure_weeks: null
+      speed_reduction_3:
+        speed_penalty_fraction: 0.35
+        closure_weeks: null
+  - hazard: flood_extent_binary_proxy
+    surface: paved
+    source_row: 'Mapping_Rebuilt: flood_extent_binary_proxy/paved'
+    factor: flood_weekly
+    direction: gte
+    surface_scope: paved
+    current_status: active_binary_operational_closure_proxy_no_depth_damage
+    thresholds:
+      speed_reduction_1: null
+      speed_reduction_2: null
+      speed_reduction_3: null
+      catastrophic_temporary: 1.0
+      catastrophic_permanent: null
+    effects:
+      catastrophic_temporary:
+        speed_penalty_fraction: null
+        closure_weeks: 1
+  - hazard: flood_extent_binary_proxy
+    surface: unpaved
+    source_row: 'Mapping_Rebuilt: flood_extent_binary_proxy/unpaved'
+    factor: flood_weekly
+    direction: gte
+    surface_scope: unpaved
+    current_status: active_binary_operational_closure_proxy_no_depth_damage
+    thresholds:
+      speed_reduction_1: null
+      speed_reduction_2: null
+      speed_reduction_3: null
+      catastrophic_temporary: 1.0
+      catastrophic_permanent: null
+    effects:
+      catastrophic_temporary:
+        speed_penalty_fraction: null
+        closure_weeks: 1
+  - hazard: wind_crosswind
+    surface: paved
+    source_row: 'Mapping_Rebuilt: wind_crosswind/paved'
+    factor: era5_crosswind_10m_weekly_max_m_s
+    direction: gte
+    surface_scope: paved
+    current_status: active_operational_restriction_only_no_treefall_closure
+    thresholds:
+      speed_reduction_1: 20.0
+      speed_reduction_2: 30.0
+      speed_reduction_3: 35.0
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+    effects:
+      speed_reduction_1:
+        speed_penalty_fraction: 0.1
+        closure_weeks: null
+      speed_reduction_2:
+        speed_penalty_fraction: 0.25
+        closure_weeks: null
+      speed_reduction_3:
+        speed_penalty_fraction: 0.4
+        closure_weeks: null
+  - hazard: wind_crosswind
+    surface: unpaved
+    source_row: 'Mapping_Rebuilt: wind_crosswind/unpaved'
+    factor: era5_crosswind_10m_weekly_max_m_s
+    direction: gte
+    surface_scope: unpaved
+    current_status: active_operational_restriction_only_dust_handled_elsewhere
+    thresholds:
+      speed_reduction_1: 20.0
+      speed_reduction_2: 30.0
+      speed_reduction_3: 35.0
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+    effects:
+      speed_reduction_1:
+        speed_penalty_fraction: 0.1
+        closure_weeks: null
+      speed_reduction_2:
+        speed_penalty_fraction: 0.25
+        closure_weeks: null
+      speed_reduction_3:
+        speed_penalty_fraction: 0.4
+        closure_weeks: null
+  - hazard: dust_visibility
+    surface: paved
+    source_row: 'Mapping_Rebuilt: dust_visibility/paved'
+    factor: visibility_weekly_min_m
+    direction: lte
+    surface_scope: paved
+    current_status: active_with_noaa_station_visibility
+    thresholds:
+      speed_reduction_1: 3000.0
+      speed_reduction_2: 1000.0
+      speed_reduction_3: 500.0
+      catastrophic_temporary: 200.0
+      catastrophic_permanent: null
+    effects:
+      speed_reduction_1:
+        speed_penalty_fraction: 0.1
+        closure_weeks: null
+      speed_reduction_2:
+        speed_penalty_fraction: 0.25
+        closure_weeks: null
+      speed_reduction_3:
+        speed_penalty_fraction: 0.4
+        closure_weeks: null
+      catastrophic_temporary:
+        speed_penalty_fraction: null
+        closure_weeks: 1
+  - hazard: dust_visibility_surface_wear
+    surface: unpaved
+    source_row: 'Mapping_Rebuilt: dust_visibility_surface_wear/unpaved'
+    factor: visibility_weekly_min_m
+    direction: lte
+    surface_scope: unpaved
+    current_status: active_with_noaa_station_visibility_operational_component_only
+    thresholds:
+      speed_reduction_1: 3000.0
+      speed_reduction_2: 1000.0
+      speed_reduction_3: 500.0
+      catastrophic_temporary: 200.0
+      catastrophic_permanent: null
+    effects:
+      speed_reduction_1:
+        speed_penalty_fraction: 0.1
+        closure_weeks: null
+      speed_reduction_2:
+        speed_penalty_fraction: 0.25
+        closure_weeks: null
+      speed_reduction_3:
+        speed_penalty_fraction: 0.4
+        closure_weeks: null
+      catastrophic_temporary:
+        speed_penalty_fraction: null
+        closure_weeks: 1

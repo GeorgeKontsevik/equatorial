@@ -11,7 +11,6 @@ import re
 
 import geopandas as gpd
 import numpy as np
-import pandana as pdna
 import pandas as pd
 import yaml
 from shapely.geometry import LineString, MultiLineString
@@ -25,6 +24,7 @@ FACTOR_PREFIXES = (
     "liquefaction_",
     "worldcover_",
     "soil_",
+    "unpaved_erosion_",
     "era5_",
     "cams_",
     "flopros_",
@@ -72,14 +72,19 @@ class Scenario:
 
 @dataclass(slots=True)
 class ThresholdRule:
+    hazard: str
+    surface: str
     factor: str
     direction: str
     thresholds: dict[str, float]
     surface_scope: str = "effective_unpaved"
+    current_status: str | None = None
+    requires_nonempty_factor: bool = False
     condition_factor: str | None = None
     condition_operator: str = "gte"
     condition_value: float | str | None = None
     effects: dict[str, dict[str, object]] | None = None
+    effect_interpolation: str = "step"
 
 
 def parse_args() -> argparse.Namespace:
@@ -243,6 +248,11 @@ def _weekly_factor_column(factor: str, week_start: date) -> str | None:
         "era5_crosswind_10m_weekly_max_m_s": f"era5_crosswind_10m_week_{token}_max",
         "era5_wind_gust_weekly_max_m_s": f"era5_wind_gust_week_{token}_max",
         "era5_max_total_precip_rate_weekly_mm_per_h": f"era5_max_total_precip_rate_week_{token}_mm_per_h",
+        "flood_depth_weekly_max_m": f"flood_depth_week_{token}_max_m",
+        "visibility_weekly_min_m": f"visibility_week_{token}_min_m",
+        "pavement_surface_temperature_weekly_max_c": f"pavement_surface_temperature_week_{token}_max_c",
+        "soil_moisture_weekly_local_percentile": f"soil_moisture_week_{token}_local_percentile",
+        "unpaved_erosion_rainfall_weekly_local_percentile": f"unpaved_erosion_rainfall_week_{token}_local_percentile",
     }
     if factor in special_weekly:
         return special_weekly[factor]
@@ -295,6 +305,16 @@ def _validate_threshold_factor_inputs(roads: gpd.GeoDataFrame, rules: list[Thres
         sample = "; ".join(missing[:8])
         extra = "" if len(missing) <= 8 else f" ... (+{len(missing) - 8} more)"
         raise RuntimeError(f"Overlay is missing required weekly factor columns for thresholds: {sample}{extra}")
+
+
+def _round_output_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    rounded = frame.copy()
+    for col in rounded.columns:
+        if not pd.api.types.is_float_dtype(rounded[col]):
+            continue
+        decimals = 5 if "share" in col.lower() else 2
+        rounded[col] = rounded[col].round(decimals)
+    return rounded
 
 
 def _threshold_float(value: object) -> float:
@@ -361,6 +381,8 @@ def _load_thresholds_from_csv(path: Path) -> list[ThresholdRule]:
                 raise ValueError(f"Unsupported direction `{direction}` for factor `{factor}` in {path}")
             rules.append(
                 ThresholdRule(
+                    hazard=str(factor),
+                    surface="effective_unpaved",
                     factor=str(factor),
                     direction=direction,
                     thresholds={lvl: float(row[lvl]) for lvl in THRESHOLD_LEVELS},
@@ -415,19 +437,61 @@ def _load_thresholds_from_yaml(path: Path) -> list[ThresholdRule]:
 
         rules.append(
             ThresholdRule(
+                hazard=str(item.get("hazard", factor)).strip() or factor,
+                surface=str(item.get("surface", "")).strip(),
                 factor=factor,
                 direction=direction,
                 thresholds=thresholds,
                 surface_scope=str(item.get("surface_scope", "all")).strip().lower() or "all",
+                current_status=None if item.get("current_status") is None else str(item.get("current_status")).strip(),
+                requires_nonempty_factor=bool(item.get("requires_nonempty_factor", False)),
                 condition_factor=None if condition_factor is None else str(condition_factor).strip(),
                 condition_operator=str(condition_operator).strip().lower(),
                 condition_value=condition_value,
                 effects=effects,
+                effect_interpolation=str(item.get("effect_interpolation", item.get("interpolation", "step"))).strip().lower(),
             )
         )
     if not rules:
         raise ValueError(f"No active threshold rules found in {path}")
     return rules
+
+
+def _factor_has_any_finite_value(roads: gpd.GeoDataFrame, factor: str, weeks: list[date]) -> bool:
+    if factor in roads.columns and pd.api.types.is_numeric_dtype(roads[factor]):
+        return bool(np.isfinite(pd.to_numeric(roads[factor], errors="coerce").to_numpy(dtype=float)).any())
+    for week_start in weeks:
+        col = _weekly_factor_column(factor, week_start)
+        if col is None or col not in roads.columns or not pd.api.types.is_numeric_dtype(roads[col]):
+            continue
+        values = pd.to_numeric(roads[col], errors="coerce").to_numpy(dtype=float)
+        if np.isfinite(values).any():
+            return True
+    return False
+
+
+def _filter_rules_with_empty_required_data(
+    roads: gpd.GeoDataFrame,
+    rules: list[ThresholdRule],
+    weeks: list[date],
+) -> tuple[list[ThresholdRule], list[dict[str, object]]]:
+    active: list[ThresholdRule] = []
+    skipped: list[dict[str, object]] = []
+    for rule in rules:
+        if rule.requires_nonempty_factor and not _factor_has_any_finite_value(roads, rule.factor, weeks):
+            skipped.append(
+                {
+                    "hazard": rule.hazard,
+                    "surface": rule.surface,
+                    "factor": rule.factor,
+                    "surface_scope": rule.surface_scope,
+                    "current_status": rule.current_status,
+                    "reason": "required factor has no finite values in overlay",
+                }
+            )
+            continue
+        active.append(rule)
+    return active, skipped
 
 
 def _build_edges(roads: gpd.GeoDataFrame, factor_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -557,6 +621,11 @@ def _road_factor_values(roads: gpd.GeoDataFrame, week_start: date) -> dict[str, 
         "era5_crosswind_10m_weekly_max_m_s",
         "era5_wind_gust_weekly_max_m_s",
         "era5_max_total_precip_rate_weekly_mm_per_h",
+        "flood_depth_weekly_max_m",
+        "visibility_weekly_min_m",
+        "pavement_surface_temperature_weekly_max_c",
+        "soil_moisture_weekly_local_percentile",
+        "unpaved_erosion_rainfall_weekly_local_percentile",
         "cams_pm2p5_weekly_mean",
         "cams_pm2p5_weekly_max",
         "cams_pm10_weekly_mean",
@@ -676,6 +745,67 @@ def _rule_effect(rule: ThresholdRule, level: str) -> tuple[float | None, int | N
     return _optional_float(raw.get("speed_penalty_fraction")), _optional_int(raw.get("closure_weeks"))
 
 
+def _rule_effect_number(rule: ThresholdRule, level: str, field: str) -> float | None:
+    if rule.effects is None:
+        if field == "speed_penalty_fraction":
+            return _speed_penalty_for_factor(rule.factor, level)
+        if field == "closure_weeks":
+            value = _closure_weeks_for_factor(rule.factor, level)
+            return None if value is None else float(value)
+        return None
+    raw = rule.effects.get(level)
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"Effect for {rule.factor}/{level} must be a mapping.")
+    return _optional_float(raw.get(field))
+
+
+def _continuous_effect_values(rule: ThresholdRule, values: np.ndarray, field: str) -> np.ndarray:
+    out = np.zeros(values.shape, dtype=float)
+    if rule.effect_interpolation != "linear":
+        return out
+
+    anchors: list[tuple[float, float]] = []
+    for level in THRESHOLD_LEVELS:
+        threshold = rule.thresholds.get(level, np.nan)
+        effect = _rule_effect_number(rule, level, field)
+        if np.isfinite(threshold) and effect is not None and np.isfinite(effect):
+            anchors.append((float(threshold), float(effect)))
+    if not anchors:
+        return out
+
+    if rule.direction in {"gte", "gt"}:
+        x = values
+        pts = sorted(anchors)
+    elif rule.direction in {"lte", "lt"}:
+        x = -values
+        pts = sorted((-threshold, effect) for threshold, effect in anchors)
+    else:
+        return out
+
+    xp = np.asarray([p[0] for p in pts], dtype=float)
+    fp = np.asarray([p[1] for p in pts], dtype=float)
+    finite = np.isfinite(x)
+    out[finite] = np.interp(x[finite], xp, fp, left=0.0, right=float(fp[-1]))
+    out[~finite] = 0.0
+    return out
+
+
+def _discrete_closure_weeks(rule: ThresholdRule, values: np.ndarray, applicable_mask: np.ndarray) -> np.ndarray:
+    out = np.zeros(values.shape, dtype=int)
+    for level in THRESHOLD_LEVELS:
+        threshold = rule.thresholds.get(level, np.nan)
+        if not np.isfinite(threshold):
+            continue
+        closure_weeks = _rule_effect_number(rule, level, "closure_weeks")
+        if closure_weeks is None:
+            continue
+        active = applicable_mask & _compare_values(values, rule.direction, threshold)
+        out[active] = np.maximum(out[active], int(closure_weeks))
+    return out
+
+
 def _compute_accessibility(
     nodes: pd.DataFrame,
     edges: pd.DataFrame,
@@ -684,6 +814,12 @@ def _compute_accessibility(
     mapping_distance_m: float,
     isolation_minutes: float,
 ) -> pd.DataFrame:
+    try:
+        import pandana as pdna
+    except ImportError as exc:
+        raise ImportError(
+            "pandana is not available in this environment; use run_weekly_accessibility_dijkstra.py or the pandana venv."
+        ) from exc
     network = pdna.Network(
         node_x=nodes["x"],
         node_y=nodes["y"],
@@ -780,6 +916,10 @@ def main() -> None:
     else:
         raise ValueError("Provide either --thresholds-yaml or --thresholds-csv.")
     _validate_threshold_factor_inputs(roads, threshold_rules, week_starts)
+    threshold_rules, skipped_threshold_rules = _filter_rules_with_empty_required_data(roads, threshold_rules, week_starts)
+    if skipped_threshold_rules:
+        skipped_factors = ", ".join(f"{row['hazard']}/{row['surface']}:{row['factor']}" for row in skipped_threshold_rules)
+        print(f"[pandana] skipped_threshold_rules_no_data={skipped_factors}", flush=True)
 
     nodes, edges = _build_edges(roads, factor_cols)
     nodes, edges, comp_filter_stats = _filter_small_components(nodes, edges, args.min_component_nodes)
@@ -849,6 +989,19 @@ def main() -> None:
                 )
                 applicable_mask &= _condition_mask(rule, roads, factor_values, unique_road_ids, road_id_to_dense)
                 n_applicable = int(applicable_mask.sum())
+                interpolated_speed = _continuous_effect_values(rule, dense_values, "speed_penalty_fraction")
+                interpolated_damage = _continuous_effect_values(rule, dense_values, "damage_index_fraction")
+                interpolated_speed[~applicable_mask] = 0.0
+                interpolated_damage[~applicable_mask] = 0.0
+                if interpolated_speed.any():
+                    road_speed_penalty = np.maximum(road_speed_penalty, interpolated_speed)
+                road_new_closure = np.maximum(road_new_closure, _discrete_closure_weeks(rule, dense_values, applicable_mask))
+                applicable_speed = interpolated_speed[applicable_mask]
+                applicable_damage = interpolated_damage[applicable_mask]
+                interpolated_speed_mean = float(np.nanmean(applicable_speed)) if applicable_speed.size else 0.0
+                interpolated_speed_max = float(np.nanmax(applicable_speed)) if applicable_speed.size else 0.0
+                interpolated_damage_mean = float(np.nanmean(applicable_damage)) if applicable_damage.size else 0.0
+                interpolated_damage_max = float(np.nanmax(applicable_damage)) if applicable_damage.size else 0.0
 
                 for level in THRESHOLD_LEVELS:
                     level_threshold = rule.thresholds[level]
@@ -858,9 +1011,11 @@ def main() -> None:
                     n_active = int(active_mask.sum())
                     speed_penalty, closure_weeks = _rule_effect(rule, level)
                     if speed_penalty is not None:
-                        road_speed_penalty[active_mask] = np.maximum(road_speed_penalty[active_mask], speed_penalty)
+                        if rule.effect_interpolation != "linear":
+                            road_speed_penalty[active_mask] = np.maximum(road_speed_penalty[active_mask], speed_penalty)
                     if closure_weeks is not None:
-                        road_new_closure[active_mask] = np.maximum(road_new_closure[active_mask], closure_weeks)
+                        if rule.effect_interpolation != "linear":
+                            road_new_closure[active_mask] = np.maximum(road_new_closure[active_mask], closure_weeks)
                     effect_type = "none"
                     if closure_weeks is not None:
                         effect_type = "closure"
@@ -878,8 +1033,13 @@ def main() -> None:
                             "threshold": level,
                             "threshold_value": float(level_threshold),
                             "effect_type": effect_type,
+                            "effect_interpolation": rule.effect_interpolation,
                             "speed_penalty_fraction": None if speed_penalty is None else float(speed_penalty),
                             "closure_weeks": None if closure_weeks is None else int(closure_weeks),
+                            "interpolated_speed_penalty_mean": interpolated_speed_mean,
+                            "interpolated_speed_penalty_max": interpolated_speed_max,
+                            "interpolated_damage_index_mean": interpolated_damage_mean,
+                            "interpolated_damage_index_max": interpolated_damage_max,
                             "n_applicable_roads": n_applicable,
                             "n_triggered_roads": n_active,
                             "share_triggered_unpaved_roads": None if unpaved_road_mask.sum() == 0 else float(n_active / unpaved_road_mask.sum()),
@@ -937,17 +1097,16 @@ def main() -> None:
             )
 
     baseline_path = output_dir / "baseline_routes.csv"
-    baseline_access.to_csv(baseline_path, index=False)
-
     weekly_access = pd.concat(weekly_access_rows, ignore_index=True)
     weekly_summary = pd.DataFrame(weekly_summary_rows).sort_values(["scenario", "week_start"]).reset_index(drop=True)
     factor_counts = pd.DataFrame(factor_rows).sort_values(["scenario", "week_start", "factor", "threshold"]).reset_index(drop=True)
     road_state = pd.DataFrame(road_state_rows).sort_values(["scenario", "week_start"]).reset_index(drop=True)
 
-    weekly_access.to_csv(output_dir / "weekly_accessibility.csv", index=False)
-    weekly_summary.to_csv(output_dir / "weekly_summary.csv", index=False)
-    factor_counts.to_csv(output_dir / "weekly_factor_threshold_counts.csv", index=False)
-    road_state.to_csv(output_dir / "weekly_road_state.csv", index=False)
+    _round_output_frame(baseline_access).to_csv(baseline_path, index=False)
+    _round_output_frame(weekly_access).to_csv(output_dir / "weekly_accessibility.csv", index=False)
+    _round_output_frame(weekly_summary).to_csv(output_dir / "weekly_summary.csv", index=False)
+    _round_output_frame(factor_counts).to_csv(output_dir / "weekly_factor_threshold_counts.csv", index=False)
+    _round_output_frame(road_state).to_csv(output_dir / "weekly_road_state.csv", index=False)
     origins.to_file(output_dir / "origins_used.gpkg", driver="GPKG")
     cities.to_file(output_dir / "cities_used.gpkg", driver="GPKG")
 
@@ -970,6 +1129,7 @@ def main() -> None:
         "baseline_connected_fraction_final": float(baseline_access["connected"].mean()),
         "scenarios": [scenario.name for scenario in scenarios],
         "threshold_rules_count": int(len(threshold_rules)),
+        "skipped_threshold_rules": skipped_threshold_rules,
         "thresholds_yaml_path": None if args.thresholds_yaml is None else str(args.thresholds_yaml),
         "thresholds_csv_path": None if args.thresholds_csv is None else str(args.thresholds_csv),
         "outputs": {

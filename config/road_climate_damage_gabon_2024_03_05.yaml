@@ -1,10 +1,8 @@
 road_climate_damage:
   version: 0.1
-  status: threshold_run_config
+  status: threshold_plot_config
   note: >
-    March-May Gabon run for exact, threshold-compatible road hazard factors.
-    This config controls the overlay period only; threshold semantics live in
-    road_hazard_thresholds_exact_mar_may.yaml.
+    March-May Gabon overlay period for rebuilt road-hazard threshold diagnostics.
 
   analysis_period:
     start_date: "2024-03-01"

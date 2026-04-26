@@ -118,6 +118,11 @@ The preview PNGs are written to:
 
 Planning-only road-climate damage configuration now also lives in:
 
+- `config/road_hazard_mapping_rebuilt.xlsx`
+- `config/road_hazard_mapping_rebuilt.csv`
+- `config/road_hazard_source_key.csv`
+- `config/road_hazard_validation_notes.csv`
+- `config/road_hazard_original_audit.csv`
 - `config/road_climate_damage.yaml`
 - `config/road_hazard_impact_curves.yaml`
 - `config/road_hazard_honest_data_contracts.yaml`
@@ -127,8 +132,9 @@ Planning-only road-climate damage configuration now also lives in:
 - `config/road_hazard_data_mapping_approval.md`
 - `config/crop_transport_loss.yaml`
 
-That file is intended as a future configuration contract for climate-driven road effects.
-It does not change the current routing code yet.
+The authoritative road-hazard mapping is now the rebuilt workbook
+`config/road_hazard_mapping_rebuilt.xlsx`. The CSV/YAML/Markdown files above
+are derived from that workbook and its `Source_Key` sheet.
 
 ## Change Study Area
 
@@ -173,22 +179,35 @@ This first pass currently aims to cover:
 
 ## Critical Fixes
 
-The current transport-climate threshold table includes several indicators defined at daily or hourly scale
-for example intense rainfall in `mm/day`, strong winds in `m/s`, and heat stress thresholds tied to hot surface conditions.
+The current transport-climate threshold table is derived from
+`config/road_hazard_mapping_rebuilt.xlsx`. It separates true threshold inputs
+from context/proxy layers:
 
-For first-pass collection, the pipeline currently keeps some climate products in monthly form:
+- rainfall intensity uses event/hourly `mm/h`; weekly CHIRPS is only antecedent/context unless a calibrated daily proxy is explicitly used
+- GFM flood extent is only a binary/likelihood operational closure proxy, not flood-depth damage
+- heat pavement rows are diagnostic unless a pavement/skin-temperature proxy is explicitly accepted for diagnostics
+- dust rows require visibility or a calibrated dust-visibility transform; CAMS PM/AOD alone is not a closure input
+- unpaved rain/soil-moisture rows use local percentiles/calibration, not universal hard thresholds
+
+For broad first-pass collection, the pipeline may still keep some climate products in monthly form:
 
 - `CHIRPS` currently configured as monthly
 - `ERA5-Land` currently configured as monthly means
 - `CAMS` currently configured as monthly means
 
-This is a temporary fallback for data collection continuity, not a methodologically final setup.
+This is a data-collection fallback, not a methodologically final threshold setup.
 
-Critical fix still required:
+Critical fixes still required before activating currently inactive workbook rows:
 
-- switch rainfall thresholds to daily/event-scale precipitation inputs
-- switch heat and wind thresholds to daily/hourly values, ideally including maxima where appropriate
-- treat monthly layers only as broad contextual indicators until the finer temporal products are wired in
+- add local-percentile calibration for unpaved erosion and soil-moisture surface condition
+- add true flood-depth data before using flood-depth damage curves
+- add pavement-temperature modelling before treating heat as anything more than a diagnostic layer
+
+Visibility status:
+
+- `visibility_noaa_isd` fetches NOAA/NCEI Global Hourly station `VIS` observations.
+- For the Gabon March-May 2024 config, station visibility has been fetched and
+  the overlay writes `visibility_week_*_min_m`.
 
 Operational resolution summary for current sources:
 
@@ -228,51 +247,58 @@ Scope boundary for this next step:
 - no route calculation is part of this step yet
 - no change to the current scenario code is implied by this note alone
 
-## Planned Road-Climate Damage Overlay
+## Road-Hazard Mapping
 
-The current planning assumption for climate-driven road damage is intentionally simple and
-configuration-first.
+The road-hazard mapping has been rebuilt from the new workbook:
 
-Road selection rule:
+- workbook: `config/road_hazard_mapping_rebuilt.xlsx`
+- primary sheet export: `config/road_hazard_mapping_rebuilt.csv`
+- source URL key: `config/road_hazard_source_key.csv`
+- validation notes: `config/road_hazard_validation_notes.csv`
+- original audit sheet export: `config/road_hazard_original_audit.csv`
+- strict row matrix: `config/weekly_hazard_thresholds_strict.csv`
+- runnable subset: `config/road_hazard_thresholds_exact_mar_may.yaml`
 
-- only roads with surface group `unpaved` or `unknown` are in scope
-- `unknown` is treated the same as `unpaved` for damage handling
-- the original labels stay unchanged in the underlying data
+Active runnable rows are limited to workbook rows that match current factors:
 
-Mock severity-to-impact mapping currently stored in [road_climate_damage.yaml](/Users/gk/Code/super-duper-disser/equatorial/config/road_climate_damage.yaml:1):
+- `extreme_rainfall_operational` on paved roads using hourly/event rainfall intensity
+- `flood_extent_binary_proxy` on paved and unpaved roads using GFM extent as binary operational closure proxy
+- `wind_crosswind` on paved and unpaved roads as operational speed restriction only
+- `dust_visibility` / `dust_visibility_surface_wear` where NOAA station visibility has been fetched and joined as `visibility_weekly_min_m`
 
-- `Minor`: road stays traversable, apply `5%` speed reduction
-- `Moderate`: road stays traversable, apply `15%` speed reduction
-- `Severe`: temporary road outage for `7 days`
-- `Catastrophic`: long road outage for `90 days`
+Rows requiring local calibration or missing variables remain inactive in the
+strict matrix rather than being silently approximated.
 
-Incremental implementation rule:
-
-- start with one indicator only
-- current first-pass active indicator: `Flood Depth`
-- keep all other indicators deferred until the first one is stable
-
-Current first-pass `Flood Depth` mock thresholds:
-
-- `Minor`: `0.1 m`
-- `Moderate`: `0.2 m`
-- `Severe`: `0.3 m`
-- `Catastrophic`: `0.5 m`
-
-Audited continuous-curve anchors are now separated into
+The rebuilt mapping rows are also stored in
 [road_hazard_impact_curves.yaml](/Users/gk/Code/super-duper-disser/equatorial/config/road_hazard_impact_curves.yaml:1).
-That file keeps road-physics thresholds shared across crops and reserves crop-specific differences
-for later consequence curves after speed loss, delay, or closure is estimated.
+That file is generated from `Mapping_Rebuilt` and preserves the workbook
+`source_reference` values.
 
-Deferred indicators still left editable in that config:
+## Road-Hazard Overnight Worker
 
-- `Landslide`
-- `Extreme Rainfall`
-- `Extreme Heat`
-- `Drought`
-- `Dust Storms`
-- `Windstorms`
-- `Urban Heat`
+The portable long-run entrypoint is:
+
+```bash
+cd /path/to/equatorial
+python -m src.data.run_road_hazard_overnight_worker \
+  --country-code GAB \
+  --config config/datasets_gabon_2024_03_05_exact.yaml \
+  --damage-config config/road_climate_damage_gabon_2024_03_05.yaml \
+  --thresholds-yaml config/road_hazard_thresholds_exact_mar_may.yaml \
+  --start-date 2024-03-01 \
+  --end-date 2024-05-31 \
+  --step-days 7 \
+  --city-threshold 50000 \
+  --candidate-top-n 100 \
+  --top-n-per-crop 3 \
+  --run-fetch
+```
+
+The worker runs data fetches, multisource road overlay construction, SPAM
+crop-origin candidates, baseline-connected origin filtering, Dijkstra weekly
+accessibility, weekly plots, crop-specific stats/maps, and parquet exports.
+If `pyarrow` is unavailable, it keeps the CSV/GPKG outputs and records the
+skip reason in `parquet_manifest.json`.
 
 ## Planned Crop-Specific Transport Loss Layer
 

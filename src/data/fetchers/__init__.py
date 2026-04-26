@@ -8,6 +8,7 @@ from src.data.fetchers import (
     coastaldem,
     era5,
     era5_spi,
+    flood_depth,
     flood,
     flopros,
     gadm,
@@ -18,6 +19,7 @@ from src.data.fetchers import (
     osm,
     road_surface,
     soilgrids,
+    visibility_noaa_isd,
     worldcover,
 )
 
@@ -29,6 +31,7 @@ FETCHER_REGISTRY = {
     "era5": era5.fetch,
     "era5_spi": era5_spi.fetch,
     "flood": flood.fetch,
+    "flood_depth": flood_depth.fetch,
     "coastaldem": coastaldem.fetch,
     "soilgrids": soilgrids.fetch,
     "ibtracs": ibtracs.fetch,
@@ -37,5 +40,6 @@ FETCHER_REGISTRY = {
     "flopros": flopros.fetch,
     "landslide_susceptibility": landslide_susceptibility.fetch,
     "cams": cams.fetch,
+    "visibility_noaa_isd": visibility_noaa_isd.fetch,
     "worldcover": worldcover.fetch,
 }

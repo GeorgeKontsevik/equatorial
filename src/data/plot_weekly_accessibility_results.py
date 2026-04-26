@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from src.data.run_weekly_accessibility_pandana import _round_output_frame
+
 
 matplotlib.use("Agg")
 
@@ -22,12 +24,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _plot_access(summary: pd.DataFrame, out_path: Path) -> None:
+def _plot_access(
+    summary: pd.DataFrame,
+    out_path: Path,
+    *,
+    value_column: str,
+    title: str,
+) -> None:
     fig, ax = plt.subplots(figsize=(11.0, 5.8))
     for scenario in sorted(summary["scenario"].unique()):
         subset = summary.loc[summary["scenario"] == scenario].sort_values("week_start")
-        ax.plot(subset["week_start"], subset["median_access_minutes"], marker="o", label=scenario)
-    ax.set_title("Weekly Median Accessibility (minutes to nearest destination)")
+        ax.plot(subset["week_start"], subset[value_column], marker="o", label=scenario)
+    ax.set_title(title)
     ax.set_xlabel("Week start")
     ax.set_ylabel("Minutes")
     ax.grid(alpha=0.25)
@@ -36,6 +44,20 @@ def _plot_access(summary: pd.DataFrame, out_path: Path) -> None:
     fig.tight_layout()
     fig.savefig(out_path, dpi=170)
     plt.close(fig)
+
+
+def _connected_summary(access: pd.DataFrame) -> pd.DataFrame:
+    connected = access.loc[access["connected"] == True].copy()  # noqa: E712
+    return (
+        connected.groupby(["scenario", "week_start"], as_index=False)
+        .agg(
+            connected_median_access_minutes=("access_minutes", "median"),
+            connected_mean_access_minutes=("access_minutes", "mean"),
+            connected_n_origins=("origin_id", "count"),
+        )
+        .sort_values(["scenario", "week_start"])
+        .reset_index(drop=True)
+    )
 
 
 def _plot_connectivity(summary: pd.DataFrame, out_path: Path) -> None:
@@ -59,9 +81,9 @@ def _plot_factor_heatmap(factors: pd.DataFrame, out_path: Path, top_factors: int
     base = factors.loc[factors["scenario"] == "unknown_as_unpaved"].copy()
     if base.empty:
         return []
+    base["share_triggered_unpaved_roads"] = pd.to_numeric(base["share_triggered_unpaved_roads"], errors="coerce").fillna(0.0)
     pivot_score = (
-        base.loc[base["threshold"].isin(["severe", "catastrophic"])]
-        .groupby("factor", as_index=False)["share_triggered_unpaved_roads"]
+        base.groupby("factor", as_index=False)["share_triggered_unpaved_roads"]
         .mean()
         .sort_values("share_triggered_unpaved_roads", ascending=False)
     )
@@ -80,6 +102,12 @@ def _plot_factor_heatmap(factors: pd.DataFrame, out_path: Path, top_factors: int
         .sort_index(axis=1)
     )
     if mat.empty:
+        fig, ax = plt.subplots(figsize=(12.0, 4.8))
+        ax.text(0.5, 0.5, "No threshold activations", transform=ax.transAxes, ha="center", va="center")
+        ax.axis("off")
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=170)
+        plt.close(fig)
         return keep
 
     fig_h = max(5.5, 0.35 * len(mat.index))
@@ -163,7 +191,21 @@ def main() -> None:
         raise FileNotFoundError(f"Missing {access_csv}")
     access = pd.read_csv(access_csv)
 
-    _plot_access(summary, args.results_dir / "weekly_median_access_minutes.png")
+    connected_summary = _connected_summary(access)
+    _round_output_frame(connected_summary).to_csv(args.results_dir / "weekly_connected_summary.csv", index=False)
+
+    _plot_access(
+        summary,
+        args.results_dir / "weekly_median_access_minutes.png",
+        value_column="median_access_minutes",
+        title="Weekly Median Accessibility, All Origins (disconnected = isolation minutes)",
+    )
+    _plot_access(
+        connected_summary,
+        args.results_dir / "weekly_connected_median_access_minutes.png",
+        value_column="connected_median_access_minutes",
+        title="Weekly Median Accessibility, Connected Origins Only",
+    )
     _plot_connectivity(summary, args.results_dir / "weekly_connected_share.png")
     top = _plot_factor_heatmap(factors, args.results_dir / "weekly_factor_threshold_heatmap.png", args.top_factors)
     _plot_access_boxplot(access, args.results_dir / "weekly_access_boxplot_all.png", connected_only=False)
@@ -173,6 +215,7 @@ def main() -> None:
         "results_dir": str(args.results_dir),
         "png_outputs": {
             "weekly_median_access_minutes": str(args.results_dir / "weekly_median_access_minutes.png"),
+            "weekly_connected_median_access_minutes": str(args.results_dir / "weekly_connected_median_access_minutes.png"),
             "weekly_connected_share": str(args.results_dir / "weekly_connected_share.png"),
             "weekly_factor_threshold_heatmap": str(args.results_dir / "weekly_factor_threshold_heatmap.png"),
             "weekly_access_boxplot_all": str(args.results_dir / "weekly_access_boxplot_all.png"),

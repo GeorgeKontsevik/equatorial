@@ -1,50 +1,41 @@
-# Road Hazard Threshold Data Mapping Approval
+# Road Hazard Data Mapping Approval
 
-Status: pending approval.
+Status: rebuilt from `config/road_hazard_mapping_rebuilt.xlsx`; NOAA visibility and overlay hooks added for runnable rows that now have data.
 
-This table maps the audited road-hazard anchor values to the data currently present in the latest GAB road overlay:
+Machine-readable sheets:
 
-- overlay: `outputs/road_multisource_overlay/GAB/2024-08-01_to_2024-10-31_7d/roads_with_multisource_overlay.gpkg`
-- rows: `48321`
-- period: `2024-08-01` to `2024-10-31`, 7-day windows
-- surfaces: `unknown=41369`, `unpaved=4438`, `paved=2514`
+- Primary mapping: `config/road_hazard_mapping_rebuilt.csv`
+- Source key: `config/road_hazard_source_key.csv`
+- Validation notes: `config/road_hazard_validation_notes.csv`
+- Current approval matrix: `config/road_hazard_data_mapping_approval.csv`
+- Original audit sheet: `config/road_hazard_original_audit.csv`
 
-Machine-readable version: `config/road_hazard_data_mapping_approval.csv`.
+## Validation Notes
 
-## Approval Summary
-
-| Hazard | Current data match | Proposed decision before modelling |
+| check | status | note |
 | --- | --- | --- |
-| `landslide_rainfall_24h` | blocked | Defer until landslide susceptibility and 24h/event rainfall are available. |
-| `extreme_rainfall_paved` | partial temporal mismatch | Do not activate audited mm/h curve from weekly CHIRPS sums without explicit proxy approval. |
-| `extreme_rainfall_unpaved` | partial temporal mismatch | Add daily/event rainfall metric or approve a weekly accumulation proxy. |
-| `flood_depth` | semantic mismatch | Defer depth curve; current `flood_weekly` is GFM extent, not confirmed water depth. |
-| `extreme_heat_pavement` | partial proxy match | Can be approved as diagnostic or speed-only low-risk proxy; current max is below 45 C. |
-| `drought_expansive_subgrade` | blocked unit mismatch | Defer until suction/soil transform exists. |
-| `dust_visibility` | partial proxy mismatch | Keep diagnostic until visibility or calibrated PM/AOD-to-visibility transform exists. |
-| `wind_crosswind` | partial proxy match | Can be approved as operational restriction proxy, not pavement damage. |
-| `urban_runoff` | blocked | Defer; route through hydraulic/pluvial depth model rather than universal rainfall thresholds. |
+| unit compatibility | pass | Rainfall intensity thresholds are only mm/h. Weekly CHIRPS is demoted to antecedent/context. Flood depth curves require m/cm depth, not binary extent. |
+| temporal compatibility | pass | Event/hourly/daily variables separated from weekly/seasonal modifiers. |
+| flood semantics | pass | GFM is mapped to binary/likelihood closure proxy; depth fragility requires depth raster or depth-estimation workflow. |
+| road type split | pass | Each hazard has paved/unpaved rows with different assumptions and metrics. |
+| wind/dust coverage | pass | Wind and dust rows added. Dust uses visibility as primary variable and CAMS PM/AOD only as calibrated proxy. |
+| threshold confidence | partial | Hard numeric values are kept only when source-backed or explicitly marked approximation/local calibration. |
 
-## Candidate Threshold Rows If Approved
+## Current Strict Mapping
 
-These are not active yet. They are the narrow set that can be translated into the current threshold-CSV contract with the least semantic damage:
-
-| factor | minor | moderate | severe | catastrophic | caveat |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `era5_skt_weekly_max` | 45 | 50 | 65 | 75 | Heat is rutting/damage proxy, not direct speed threshold. Current code treats SKT as speed-only. |
-| `era5_wind_speed_weekly_max` | 20 | 30 | 42 | 45 | Operational restriction / treefall proxy only; not pavement damage. |
-
-Not recommended for direct activation yet:
-
-| factor | reason |
-| --- | --- |
-| `chirps_weekly_mm` | Current values are weekly sums; audited anchors are short-duration intensity or event-depth. |
-| `flood_weekly` | Current data are GFM flood extent values; audited anchors are flood depths in meters. |
-
-## Verification Notes
-
-- `chirps_weekly_mm`: `min=0`, `p50=15.38`, `p95=94.12`, `max=179.21 mm/week`.
-- `flood_weekly`: all current GAB weekly columns are `0`, with `positive_roads=0`.
-- `era5_skt_weekly_max`: `min=25.79 C`, `p50=31.99 C`, `p95=35.30 C`, `max=43.65 C`.
-- `era5_wind_speed_weekly_max`: `min=0.93`, `p50=2.88`, `p95=6.94`, `max=8.77 m/s`.
-- `cams_duaod550_weekly_max`: `min=0.00136`, `p50=0.00663`, `p95=0.03775`, `max=0.10765`.
+| hazard_type | road_type | runnable_factor | surface_scope | current_use | status | source_reference |
+| --- | --- | --- | --- | --- | --- | --- |
+| extreme_rainfall_operational | paved | era5_tp_1h_max_weekly_mm_per_h | paved | operational speed/capacity penalty only; not structural failure | runnable_with_hourly_intensity_factor | S2_CHIRPS_daily: https://developers.google.com/earth-engine/datasets/catalog/UCSB-CHG_CHIRPS_DAILY; S8_Tsapakis_2013_weather_travel_time: https://www.sciencedirect.com/science/article/pii/S0966692312002694; S9_Chung_2012_weather_capacity: https://www.sciencedirect.com/science/article/abs/pii/S0967070X11001144 |
+| extreme_rainfall_erosion | unpaved |  | unpaved | inactive until local percentile/calibration factor exists | inactive_no_universal_threshold | S2_CHIRPS_daily: https://developers.google.com/earth-engine/datasets/catalog/UCSB-CHG_CHIRPS_DAILY; S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm; S12_FAO_protective_measures: https://www.fao.org/4/T0099E/T0099e01.htm; S15_Unpaved_road_erosion_2024: https://bioone.org/journals/air-soil-and-water-research/volume-17/issue-1/11786221241272396/Erosion-Mechanisms-in-Unpaved-Roads--Effects-of-Slope-Rainfall/10.1177/11786221241272396.full |
+| flood_depth | paved | flood_depth_weekly_max_m | paved | inactive until actual flood-depth raster/model exists | inactive_needs_depth_factor | S1_Koks_2019_Nature: https://www.nature.com/articles/s41467-019-10442-3; S1b_Koks_2019_supplement: https://static-content.springer.com/esm/art%3A10.1038%2Fs41467-019-10442-3/MediaObjects/41467_2019_10442_MOESM1_ESM.pdf; S4_Pregnolato_2017_flood_depth_disruption: https://www.sciencedirect.com/science/article/pii/S1361920916308367; S5_Kramer_2016_inundated_roads: https://deltaexpertise.nl/images/f/f2/Kramer_2016_Safety_criteria_for_the_trafficability_of_inundated_roads_in_urban.pdf |
+| flood_depth | unpaved | flood_depth_weekly_max_m | unpaved | inactive until actual flood-depth raster/model exists | inactive_needs_depth_factor | S1_Koks_2019_Nature: https://www.nature.com/articles/s41467-019-10442-3; S1b_Koks_2019_supplement: https://static-content.springer.com/esm/art%3A10.1038%2Fs41467-019-10442-3/MediaObjects/41467_2019_10442_MOESM1_ESM.pdf; S4_Pregnolato_2017_flood_depth_disruption: https://www.sciencedirect.com/science/article/pii/S1361920916308367; S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm |
+| flood_extent_binary_proxy | paved | flood_weekly | paved | binary operational closure proxy only; no depth damage | runnable_binary_proxy_if_gfm_present | S6_Copernicus_GFM_manual: https://extwiki.eodc.eu/gfm_assets/gfm4.0_pum_2025.pdf; S7_Betterle_2024_flood_depth_from_extent: https://nhess.copernicus.org/articles/24/2817/2024/ |
+| flood_extent_binary_proxy | unpaved | flood_weekly | unpaved | binary operational closure proxy plus recovery/degradation; no depth damage | runnable_binary_proxy_if_gfm_present | S6_Copernicus_GFM_manual: https://extwiki.eodc.eu/gfm_assets/gfm4.0_pum_2025.pdf; S7_Betterle_2024_flood_depth_from_extent: https://nhess.copernicus.org/articles/24/2817/2024/; S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm |
+| heat_pavement | paved | pavement_surface_temperature_weekly_max_c | paved | diagnostic proxy from ERA5 skin temperature; not active traffic-speed threshold without pavement model validation | diagnostic_proxy_factor_buildable | S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land; S10_FHWA_pavement_resilience: https://www.fhwa.dot.gov/pavement/concrete/pubs/hif23006.pdf |
+| heat_dryness | unpaved |  | unpaved | inactive until local T/soil-moisture/wind/traffic index exists | inactive_needs_local_index | S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land; S10_FHWA_pavement_resilience: https://www.fhwa.dot.gov/pavement/concrete/pubs/hif23006.pdf; S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm |
+| wind_crosswind | paved | era5_crosswind_10m_weekly_max_m_s | paved | operational restriction only; no pavement damage | runnable_speed_only_crosswind_proxy | S1_Koks_2019_Nature: https://www.nature.com/articles/s41467-019-10442-3; S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land |
+| wind_crosswind | unpaved | era5_crosswind_10m_weekly_max_m_s | unpaved | operational restriction only; dust handled by dust/visibility row | runnable_speed_only_crosswind_proxy | S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land; S13_UNEP_WMO_dust_assessment: https://wesr.unep.org/media/docs/assessments/global_assessment_of_sand_and_dust_stormsx.pdf; S14_UNDRR_dust_sandstorm_limits: https://www.undrr.org/understanding-disaster-risk/terminology/hips/mh0201 |
+| dust_visibility | paved | visibility_weekly_min_m | paved | inactive until visibility factor exists; CAMS PM/AOD not enough | runnable_if_visibility_factor_present | S13_UNEP_WMO_dust_assessment: https://wesr.unep.org/media/docs/assessments/global_assessment_of_sand_and_dust_stormsx.pdf; S14_UNDRR_dust_sandstorm_limits: https://www.undrr.org/understanding-disaster-risk/terminology/hips/mh0201 |
+| dust_visibility_surface_wear | unpaved | visibility_weekly_min_m | unpaved | inactive until visibility/calibrated dust factor exists | runnable_if_visibility_factor_present | S13_UNEP_WMO_dust_assessment: https://wesr.unep.org/media/docs/assessments/global_assessment_of_sand_and_dust_stormsx.pdf; S14_UNDRR_dust_sandstorm_limits: https://www.undrr.org/understanding-disaster-risk/terminology/hips/mh0201; S12_FAO_protective_measures: https://www.fao.org/4/T0099E/T0099e01.htm |
+| soil_moisture_subgrade | paved | soil_moisture_weekly_local_percentile | paved | diagnostic local percentile from ERA5 swvl1; activate only after local calibration/baseline choice | diagnostic_local_percentile_factor_buildable | S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land; S10_FHWA_pavement_resilience: https://www.fhwa.dot.gov/pavement/concrete/pubs/hif23006.pdf; S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm |
+| soil_moisture_surface_condition | unpaved | soil_moisture_weekly_local_percentile | unpaved | diagnostic local percentile from ERA5 swvl1; activate only after local calibration/baseline choice | diagnostic_local_percentile_factor_buildable | S2_CHIRPS_daily: https://developers.google.com/earth-engine/datasets/catalog/UCSB-CHG_CHIRPS_DAILY; S3_ERA5_Land: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land; S11_FAO_drainage_design: https://www.fao.org/4/t0099e/t0099e04.htm; S12_FAO_protective_measures: https://www.fao.org/4/T0099E/T0099e01.htm |

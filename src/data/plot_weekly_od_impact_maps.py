@@ -87,10 +87,16 @@ def _week_token(week: date) -> str:
 def _weekly_col(factor: str, week: date) -> str | None:
     token = _week_token(week)
     mapping = {
+        "flood_weekly": f"flood_week_{token}",
         "chirps_24h_max_weekly_mm": f"chirps_24h_max_week_{token}_mm",
         "era5_tp_daily_sum_weekly_max_mm": f"era5_tp_daily_sum_max_week_{token}_mm",
         "era5_tp_1h_max_weekly_mm_per_h": f"era5_tp_1h_max_week_{token}_mm_per_h",
         "era5_crosswind_10m_weekly_max_m_s": f"era5_crosswind_10m_week_{token}_max",
+        "flood_depth_weekly_max_m": f"flood_depth_week_{token}_max_m",
+        "visibility_weekly_min_m": f"visibility_week_{token}_min_m",
+        "pavement_surface_temperature_weekly_max_c": f"pavement_surface_temperature_week_{token}_max_c",
+        "soil_moisture_weekly_local_percentile": f"soil_moisture_week_{token}_local_percentile",
+        "unpaved_erosion_rainfall_weekly_local_percentile": f"unpaved_erosion_rainfall_week_{token}_local_percentile",
     }
     return mapping.get(factor)
 

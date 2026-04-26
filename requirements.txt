@@ -6,6 +6,7 @@ matplotlib
 notebook
 openpyxl
 pandas
+pyarrow
 pycountry
 pyyaml
 rasterio

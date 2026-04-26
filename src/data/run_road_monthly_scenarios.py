@@ -160,7 +160,8 @@ def _ensure_geonames_global(project_root: Path) -> Path:
 
 def _read_geonames_zip(zip_path: Path) -> pd.DataFrame:
     with zipfile.ZipFile(zip_path) as archive:
-        member = next(name for name in archive.namelist() if name.lower().endswith(".txt"))
+        txt_members = [name for name in archive.namelist() if name.lower().endswith(".txt")]
+        member = next((name for name in txt_members if Path(name).name.lower() != "readme.txt"), txt_members[0])
         with archive.open(member) as handle:
             frame = pd.read_csv(handle, sep="\t", header=None, names=GEONAMES_COLUMNS, dtype={"country_code": "string"})
     frame["population"] = pd.to_numeric(frame["population"], errors="coerce").fillna(0)

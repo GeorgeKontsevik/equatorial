@@ -77,15 +77,19 @@ def _ensure_dataset_defaults(config: dict[str, Any], study_area: dict[str, Any])
         "chirps",
         "era5",
         "flood",
+        "flood_depth",
         "coastaldem",
         "soilgrids",
         "road_surface",
         "landslide_susceptibility",
         "worldcover",
+        "visibility_noaa_isd",
     ]:
         dataset_cfg = datasets.get(dataset_name)
         if dataset_cfg is not None and bbox is not None:
             dataset_cfg.setdefault("bbox", bbox)
+            if country_code:
+                dataset_cfg.setdefault("country_code", country_code)
 
     era5_cfg = datasets.get("era5")
     if era5_cfg is not None and bbox is not None:

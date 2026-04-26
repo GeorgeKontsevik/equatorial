@@ -13,35 +13,59 @@ import matplotlib
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+import yaml
 
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 
-THRESHOLD_LEVELS = ("minor", "moderate", "severe", "catastrophic")
+THRESHOLD_LEVELS = (
+    "speed_reduction_1",
+    "speed_reduction_2",
+    "speed_reduction_3",
+    "catastrophic_temporary",
+    "catastrophic_permanent",
+)
+LEGACY_THRESHOLD_LEVEL_ALIASES = {
+    "minor": "speed_reduction_1",
+    "moderate": "speed_reduction_2",
+    "severe": "speed_reduction_3",
+    "catastrophic": "catastrophic_temporary",
+}
 FACTOR_PREFIXES = (
     "chirps_",
     "flood_",
+    "visibility_",
+    "pavement_",
     "landslide_",
     "gem_",
     "liquefaction_",
     "worldcover_",
     "soil_",
+    "unpaved_erosion_",
     "era5_",
     "cams_",
     "flopros_",
 )
 THRESHOLD_STYLES = {
-    "minor": ("#3b7ddd", "--"),
-    "moderate": ("#e0a100", "--"),
-    "severe": ("#d65f00", "-."),
-    "catastrophic": ("#b00020", "-"),
+    "speed_reduction_1": ("#3b7ddd", "--"),
+    "speed_reduction_2": ("#e0a100", "--"),
+    "speed_reduction_3": ("#d65f00", "-."),
+    "catastrophic_temporary": ("#b00020", "-"),
+    "catastrophic_permanent": ("#5c0011", "-"),
 }
 TEMPERATURE_FACTOR_MARKERS = ("era5_t2m_", "era5_skt_")
 FACTOR_LABELS = {
-    "flood_weekly": "Flood depth",
+    "flood_weekly": "Flood extent binary proxy",
+    "flood_depth_weekly_max_m": "Flood depth",
+    "visibility_weekly_min_m": "Visibility",
+    "pavement_surface_temperature_weekly_max_c": "Pavement surface temperature proxy",
+    "soil_moisture_weekly_local_percentile": "Soil moisture local percentile",
+    "unpaved_erosion_rainfall_weekly_local_percentile": "Unpaved erosion rainfall local percentile",
     "chirps_weekly_mm": "Weekly rainfall",
+    "era5_tp_1h_max_weekly_mm_per_h": "ERA5 hourly precipitation intensity",
+    "era5_crosswind_10m_weekly_max_m_s": "ERA5 10 m crosswind",
     "era5_t2m_weekly_mean": "Air temperature",
     "era5_t2m_weekly_max": "Air temperature",
     "era5_skt_weekly_mean": "Surface temperature",
@@ -87,6 +111,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--results-dir", type=Path, required=True)
     parser.add_argument("--overlay-gpkg", type=Path, default=None)
     parser.add_argument("--thresholds-csv", type=Path, default=None)
+    parser.add_argument("--thresholds-yaml", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--scenario", type=str, default="all", help="Scenario name, comma-separated names, or `all`.")
     parser.add_argument("--include-all-factors", action="store_true", help="Plot all numeric factor layers, not only threshold-configured factors.")
@@ -118,23 +143,80 @@ def _load_summary(results_dir: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _load_thresholds(path: Path) -> dict[str, dict[str, object]]:
+def _empty_thresholds() -> dict[str, float]:
+    return {level: np.nan for level in THRESHOLD_LEVELS}
+
+
+def _normalise_threshold_level(level: object) -> str:
+    return LEGACY_THRESHOLD_LEVEL_ALIASES.get(str(level), str(level))
+
+
+def _load_thresholds_csv(path: Path) -> dict[str, dict[str, object]]:
     frame = pd.read_csv(path)
     required = {"factor", "direction", "threshold", "threshold_value"}
     missing = required.difference(frame.columns)
     if missing:
         raise ValueError(f"Threshold CSV is missing columns {sorted(missing)}: {path}")
 
+    frame["threshold"] = frame["threshold"].map(_normalise_threshold_level)
     frame = frame.loc[frame["threshold"].isin(THRESHOLD_LEVELS)].copy()
     out: dict[str, dict[str, object]] = {}
     for factor, part in frame.groupby("factor", sort=True):
         directions = part["direction"].dropna().astype(str).str.lower().unique().tolist()
         if len(directions) != 1:
             raise ValueError(f"Factor `{factor}` must have exactly one direction in {path}")
-        values = {level: np.nan for level in THRESHOLD_LEVELS}
+        values = _empty_thresholds()
         for row in part.itertuples(index=False):
             values[str(row.threshold)] = float(row.threshold_value)
-        out[str(factor)] = {"direction": directions[0], "thresholds": values}
+        out[str(factor)] = {
+            "direction": directions[0],
+            "thresholds": values,
+            "effects": {},
+            "surface_scope": "all",
+            "effect_interpolation": "step",
+        }
+    return out
+
+
+def _load_thresholds_yaml(path: Path) -> dict[str, dict[str, object]]:
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    root = payload.get("road_hazard_thresholds", payload) if isinstance(payload, dict) else {}
+    raw_rules = root.get("rules", []) if isinstance(root, dict) else []
+    out: dict[str, dict[str, object]] = {}
+    for item in raw_rules:
+        if not isinstance(item, dict):
+            continue
+        factor = str(item.get("factor", "")).strip()
+        if not factor:
+            continue
+        values = _empty_thresholds()
+        for raw_level, raw_value in (item.get("thresholds") or {}).items():
+            level = _normalise_threshold_level(raw_level)
+            if level not in values or raw_value is None:
+                continue
+            try:
+                values[level] = float(raw_value)
+            except (TypeError, ValueError):
+                values[level] = np.nan
+        if not any(np.isfinite(value) for value in values.values()):
+            continue
+        direction = str(item.get("direction", "gte")).lower()
+        effects = item.get("effects") if isinstance(item.get("effects"), dict) else {}
+        surface_scope = str(item.get("surface_scope", "all")).strip().lower()
+        interpolation = str(item.get("effect_interpolation", item.get("interpolation", "step"))).strip().lower()
+        hazard = str(item.get("hazard", factor)).strip() or factor
+        surface = str(item.get("surface", surface_scope)).strip() or surface_scope
+        key = f"{surface_scope}__{hazard}__{factor}"
+        out[key] = {
+            "factor": factor,
+            "direction": direction,
+            "thresholds": values,
+            "effects": effects,
+            "surface_scope": surface_scope,
+            "surface": surface,
+            "hazard": hazard,
+            "effect_interpolation": interpolation,
+        }
     return out
 
 
@@ -145,6 +227,21 @@ def _numeric_external_factors(roads: gpd.GeoDataFrame, threshold_factors: set[st
             continue
         if FLOOD_WEEK_RE.match(col):
             factors.add("flood_weekly")
+            continue
+        if re.match(r"^flood_depth_week_\d{4}_\d{2}_\d{2}_max_m$", col):
+            factors.add("flood_depth_weekly_max_m")
+            continue
+        if re.match(r"^visibility_week_\d{4}_\d{2}_\d{2}_min_m$", col):
+            factors.add("visibility_weekly_min_m")
+            continue
+        if re.match(r"^pavement_surface_temperature_week_\d{4}_\d{2}_\d{2}_max_c$", col):
+            factors.add("pavement_surface_temperature_weekly_max_c")
+            continue
+        if re.match(r"^soil_moisture_week_\d{4}_\d{2}_\d{2}_local_percentile$", col):
+            factors.add("soil_moisture_weekly_local_percentile")
+            continue
+        if re.match(r"^unpaved_erosion_rainfall_week_\d{4}_\d{2}_\d{2}_local_percentile$", col):
+            factors.add("unpaved_erosion_rainfall_weekly_local_percentile")
             continue
         if CHIRPS_WEEK_RE.match(col):
             factors.add("chirps_weekly_mm")
@@ -163,10 +260,10 @@ def _numeric_external_factors(roads: gpd.GeoDataFrame, threshold_factors: set[st
 
 
 def _parse_dates(summary: dict[str, object]) -> list[str]:
-    period = dict(summary["period"])
+    period = dict(summary.get("period") or summary.get("analysis_period") or {})
     start = datetime.strptime(str(period["start_date"]), "%Y-%m-%d").date()
     end = datetime.strptime(str(period["end_date"]), "%Y-%m-%d").date()
-    step_days = int(period["step_days"])
+    step_days = int(period.get("step_days") or period.get("aggregation_period_days"))
     weeks: list[str] = []
     cursor = start
     while cursor <= end:
@@ -240,6 +337,20 @@ def _factor_values(roads: gpd.GeoDataFrame, factor: str, week_start: str) -> tup
         col = f"chirps_week_{token}_mm"
         if col in roads.columns:
             return pd.to_numeric(roads[col], errors="coerce"), col
+    special = {
+        "flood_depth_weekly_max_m": f"flood_depth_week_{token}_max_m",
+        "visibility_weekly_min_m": f"visibility_week_{token}_min_m",
+        "pavement_surface_temperature_weekly_max_c": f"pavement_surface_temperature_week_{token}_max_c",
+        "soil_moisture_weekly_local_percentile": f"soil_moisture_week_{token}_local_percentile",
+        "unpaved_erosion_rainfall_weekly_local_percentile": f"unpaved_erosion_rainfall_week_{token}_local_percentile",
+        "era5_tp_1h_max_weekly_mm_per_h": f"era5_tp_1h_max_week_{token}_mm_per_h",
+        "era5_crosswind_10m_weekly_max_m_s": f"era5_crosswind_10m_week_{token}_max",
+        "era5_wind_gust_weekly_max_m_s": f"era5_wind_gust_week_{token}_max",
+        "era5_max_total_precip_rate_weekly_mm_per_h": f"era5_max_total_precip_rate_week_{token}_mm_per_h",
+    }
+    col = special.get(factor)
+    if col is not None and col in roads.columns:
+        return pd.to_numeric(roads[col], errors="coerce"), col
     if "_weekly_" in factor and (factor.startswith("era5_") or factor.startswith("cams_")):
         col = factor.replace("_weekly_", f"_week_{token}_", 1)
         if col in roads.columns:
@@ -266,6 +377,27 @@ def _effective_unpaved_mask(roads: gpd.GeoDataFrame, scenario: str) -> pd.Series
     else:
         raise ValueError(f"Unsupported scenario: {scenario}")
     return effective == "unpaved"
+
+
+def _effective_scope_mask(roads: gpd.GeoDataFrame, scenario: str, scope: str) -> pd.Series:
+    normalized = str(scope or "all").strip().lower().replace("-", "_")
+    surface = roads["surface_group"].astype("string").str.lower().fillna("unknown")
+    if scenario == "actual_unpaved":
+        effective = surface
+    elif scenario == "unknown_as_paved":
+        effective = surface.where(surface != "unknown", "paved")
+    elif scenario == "unknown_as_unpaved":
+        effective = surface.where(surface != "unknown", "unpaved")
+    else:
+        raise ValueError(f"Unsupported scenario: {scenario}")
+    if normalized in {"all", "any", "both", "*"}:
+        return pd.Series(True, index=roads.index)
+    if normalized.startswith("actual_"):
+        target = normalized.removeprefix("actual_")
+        return surface == target
+    if normalized.startswith("effective_"):
+        normalized = normalized.removeprefix("effective_")
+    return effective == normalized
 
 
 def _stats(values: pd.Series) -> dict[str, float | int | None]:
@@ -350,6 +482,53 @@ def _threshold_class(values: pd.Series, direction: str, thresholds: dict[str, fl
     return out
 
 
+def _effect_float(effects: dict[str, object], level: str, field: str) -> float | None:
+    raw = effects.get(level)
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get(field)
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if np.isfinite(numeric) else None
+
+
+def _continuous_effect_values(
+    values: pd.Series,
+    direction: str,
+    thresholds: dict[str, float],
+    effects: dict[str, object],
+    field: str,
+    interpolation: str,
+) -> pd.Series:
+    out = pd.Series(0.0, index=values.index, dtype="float64")
+    if interpolation != "linear":
+        return out
+    anchors: list[tuple[float, float]] = []
+    for level in THRESHOLD_LEVELS:
+        threshold = thresholds.get(level, np.nan)
+        effect = _effect_float(effects, level, field)
+        if np.isfinite(threshold) and effect is not None:
+            anchors.append((float(threshold), float(effect)))
+    if not anchors:
+        return out
+    x = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
+    if direction in {"gte", "gt"}:
+        pts = sorted(anchors)
+    elif direction in {"lte", "lt"}:
+        x = -x
+        pts = sorted((-threshold, effect) for threshold, effect in anchors)
+    else:
+        return out
+    xp = np.asarray([p[0] for p in pts], dtype=float)
+    fp = np.asarray([p[1] for p in pts], dtype=float)
+    finite = np.isfinite(x)
+    arr = np.zeros(x.shape, dtype=float)
+    arr[finite] = np.interp(x[finite], xp, fp, left=0.0, right=float(fp[-1]))
+    return pd.Series(arr, index=values.index)
+
+
 def _plot_factor_map(
     roads: gpd.GeoDataFrame,
     values: pd.Series,
@@ -400,10 +579,11 @@ def _plot_threshold_class_map(
 ) -> None:
     palette = {
         "none": "#d9d9d9",
-        "minor": "#fee08b",
-        "moderate": "#fdae61",
-        "severe": "#f46d43",
-        "catastrophic": "#a50026",
+        "speed_reduction_1": "#fee08b",
+        "speed_reduction_2": "#fdae61",
+        "speed_reduction_3": "#f46d43",
+        "catastrophic_temporary": "#a50026",
+        "catastrophic_permanent": "#5c0011",
     }
     subset = roads.loc[mask].copy()
     subset["_threshold_class"] = _threshold_class(values.loc[mask], direction, thresholds)
@@ -430,10 +610,17 @@ def main() -> None:
     summary = _load_summary(args.results_dir)
     overlay_path = args.overlay_gpkg or _resolve_path(str(summary.get("overlay_source", "")), project_root)
     thresholds_path = args.thresholds_csv or _resolve_path(str(summary.get("thresholds_csv_path", "")), project_root)
+    thresholds_yaml_path = args.thresholds_yaml or _resolve_path(str(summary.get("thresholds_yaml_path", "")), project_root)
     if overlay_path is None or not overlay_path.exists():
         raise FileNotFoundError(f"Missing overlay GPKG: {overlay_path}")
-    if thresholds_path is None or not thresholds_path.exists():
-        raise FileNotFoundError(f"Missing thresholds CSV: {thresholds_path}")
+    if thresholds_path is not None and thresholds_path.exists():
+        thresholds = _load_thresholds_csv(thresholds_path)
+        threshold_source = thresholds_path
+    elif thresholds_yaml_path is not None and thresholds_yaml_path.exists():
+        thresholds = _load_thresholds_yaml(thresholds_yaml_path)
+        threshold_source = thresholds_yaml_path
+    else:
+        raise FileNotFoundError(f"Missing thresholds CSV/YAML: {thresholds_path} / {thresholds_yaml_path}")
 
     out_dir = args.out_dir or (args.results_dir / "weekly_factor_value_boxplots")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -443,49 +630,81 @@ def main() -> None:
     _clear_generated_pngs(map_dir)
 
     roads = gpd.read_file(overlay_path)
-    thresholds = _load_thresholds(thresholds_path)
     weeks = _parse_dates(summary)
-    threshold_factors = set(thresholds.keys())
+    threshold_factors = {str(cfg.get("factor", key)) for key, cfg in thresholds.items()}
     if args.include_all_factors:
-        factors = _numeric_external_factors(roads, threshold_factors)
+        factors = sorted(set(thresholds.keys()) | set(_numeric_external_factors(roads, threshold_factors)))
     else:
-        factors = sorted(threshold_factors)
+        factors = sorted(thresholds.keys())
     scenarios = _scenario_names(args.scenario)
 
     stat_rows: list[dict[str, object]] = []
     png_outputs: list[str] = []
     for scenario in scenarios:
-        mask = _effective_unpaved_mask(roads, scenario)
-        for factor in factors:
+        for factor_key in factors:
             cfg = thresholds.get(
-                factor,
+                factor_key,
                 {
+                    "factor": factor_key,
                     "direction": "",
-                    "thresholds": {level: np.nan for level in THRESHOLD_LEVELS},
+                    "thresholds": _empty_thresholds(),
+                    "effects": {},
+                    "surface_scope": "all",
+                    "effect_interpolation": "step",
                 },
             )
             factor_rows: list[dict[str, object]] = []
             raw_by_week: dict[str, np.ndarray] = {}
+            factor = str(cfg.get("factor", factor_key))
             direction = str(cfg["direction"])
             factor_thresholds = dict(cfg["thresholds"])
+            factor_effects = dict(cfg.get("effects") or {})
+            surface_scope = str(cfg.get("surface_scope", "all"))
+            effect_interpolation = str(cfg.get("effect_interpolation", "step"))
             values_by_week: dict[str, pd.Series] = {}
+            mask = _effective_scope_mask(roads, scenario, surface_scope)
             for week_start in weeks:
                 values, value_source = _factor_values(roads, factor, week_start)
                 values_by_week[week_start] = values
                 selected = values.loc[mask]
                 finite = selected.replace([np.inf, -np.inf], np.nan).dropna()
+                speed_effect = _continuous_effect_values(
+                    values,
+                    direction,
+                    factor_thresholds,
+                    factor_effects,
+                    "speed_penalty_fraction",
+                    effect_interpolation,
+                ).loc[mask]
+                damage_effect = _continuous_effect_values(
+                    values,
+                    direction,
+                    factor_thresholds,
+                    factor_effects,
+                    "damage_index_fraction",
+                    effect_interpolation,
+                ).loc[mask]
                 raw_by_week[week_start] = finite.to_numpy(dtype="float64")
                 row: dict[str, object] = {
                     "week_start": week_start,
                     "scenario": scenario,
-                    "factor": factor,
+                    "factor": factor_key,
+                    "source_factor": factor,
+                    "hazard": cfg.get("hazard"),
+                    "surface": cfg.get("surface"),
                     "direction": direction,
+                    "surface_scope": surface_scope,
+                    "effect_interpolation": effect_interpolation,
                     "value_source": value_source,
-                    "n_effective_unpaved_roads": int(mask.sum()),
+                    "n_applicable_roads": int(mask.sum()),
+                    "interpolated_speed_penalty_mean": float(speed_effect.mean()) if len(speed_effect) else 0.0,
+                    "interpolated_speed_penalty_max": float(speed_effect.max()) if len(speed_effect) else 0.0,
+                    "interpolated_damage_index_mean": float(damage_effect.mean()) if len(damage_effect) else 0.0,
+                    "interpolated_damage_index_max": float(damage_effect.max()) if len(damage_effect) else 0.0,
                 }
                 row.update(_stats(selected))
                 for level in THRESHOLD_LEVELS:
-                    threshold_value = float(factor_thresholds[level])
+                    threshold_value = float(factor_thresholds.get(level, np.nan))
                     row[f"{level}_threshold"] = threshold_value
                     if direction in {"gte", "lte"} and np.isfinite(threshold_value):
                         if direction == "gte":
@@ -498,7 +717,7 @@ def main() -> None:
                 stat_rows.append(row)
 
             factor_frame = pd.DataFrame(factor_rows)
-            safe_factor = factor.replace("/", "_").replace(" ", "_")
+            safe_factor = factor_key.replace("/", "_").replace(" ", "_")
             out_path = out_dir / f"{scenario}__{safe_factor}.png"
             _plot_factor(
                 factor_frame,
@@ -561,7 +780,7 @@ def main() -> None:
     pd.DataFrame(variability_rows).to_csv(variability_path, index=False)
     manifest = {
         "overlay_gpkg": str(overlay_path),
-        "thresholds_csv": str(thresholds_path),
+        "thresholds_source": str(threshold_source),
         "diagnostics_csv": str(stats_path),
         "variability_csv": str(variability_path),
         "png_dir": str(out_dir),

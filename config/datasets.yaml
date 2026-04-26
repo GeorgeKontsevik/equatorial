@@ -143,6 +143,13 @@ datasets:
     spatial_resolution_raw: 20 m Sentinel-1 SAR flood extent (GFM ensemble)
     temporal_resolution: event-based SAR acquisitions, sampled weekly (7-day windows)
 
+  flood_depth:
+    enabled: false
+    source_url: manual flood-depth raster/model output
+    spatial_resolution_raw: source/model dependent
+    temporal_resolution: event, weekly, or scenario static
+    license_or_access_note: Requires explicit source/model licence. GFM flood extent is not flood depth.
+
   coastaldem:
     enabled: false
 
@@ -182,6 +189,16 @@ datasets:
         - particulate_matter_10um
         - dust_aerosol_optical_depth_550nm
       format: netcdf
+
+  visibility_noaa_isd:
+    enabled: false
+    source_url: https://www.ncei.noaa.gov/data/global-hourly/access
+    history_url: https://www.ncei.noaa.gov/pub/data/noaa/isd-history.csv
+    start_date: "2024-07-01"
+    end_date: "2024-09-30"
+    max_stations: 12
+    spatial_resolution_raw: station observations
+    temporal_resolution: hourly visibility observations
 
   gem:
     enabled: false
