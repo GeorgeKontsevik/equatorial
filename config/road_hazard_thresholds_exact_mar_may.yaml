@@ -1,0 +1,443 @@
+road_hazard_thresholds:
+  version: 0.5
+  status: audit_threshold_reference_matrix
+  source_table: config/weekly_hazard_thresholds_strict.csv
+  philosophy: 'This file mirrors the CSV audit matrix. It is a threshold reference, not a guarantee that every row is runnable with the current overlay. Rows marked
+    context_only, reference_only, or needs_* require a matching factor/model before they should drive accessibility scenarios.
+
+    '
+  aggregation_rule: 'Weekly model inputs are made from daily values. If source data are hourly, first aggregate hourly observations to a daily value using the row''s
+    daily_aggregation, then aggregate daily values with weekly_aggregation.
+
+    '
+  threshold_slots:
+    speed_reduction_1:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.1
+    speed_reduction_2:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.25
+    speed_reduction_3:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.4
+    catastrophic_temporary:
+      effect_type: temporary_closure
+      closure_weeks: 1
+    catastrophic_permanent:
+      effect_type: permanent_closure
+      closure_weeks: 5200
+  rules:
+  - hazard: Flood depth
+    surface: both
+    road_mechanism: standing water -> speed loss / impassability
+    dataset: flood_depth_model_or_depth_raster
+    factor: flood_depth_weekly_max_m
+    threshold_metric: maximum road water depth inside each weekly window
+    source_cadence: event_or_daily
+    daily_aggregation: max
+    weekly_aggregation: max
+    units: m
+    direction: gte
+    surface_scope: both
+    current_status: needs_exact_depth_dataset
+    thresholds:
+      speed_reduction_1: 0.01
+      speed_reduction_2: 0.1
+      speed_reduction_3: null
+      catastrophic_temporary: 0.3
+      catastrophic_permanent: 0.6
+    baseline_threshold: 'speed-loss onset: 10 mm; damage onset: 0.10 m; closure: 0.30 m cars / 0.60 m emergency vehicles'
+    additional_threshold: 0.3 m small vehicles impassable; >=0.5 m total closure / instability
+    road_impact: loss of control; closure; subgrade damage
+    how_to_use: Direct use. This is the strongest road variable.
+  - hazard: Extreme rainfall
+    surface: paved
+    road_mechanism: wet-road speed / drainage stress
+    dataset: era5_or_source_native_precipitation_rate
+    factor: era5_max_total_precip_rate_weekly_mm_per_h
+    threshold_metric: maximum rainfall intensity inside each weekly window
+    source_cadence: hourly
+    daily_aggregation: max
+    weekly_aggregation: max
+    units: mm_per_hour
+    direction: gte
+    surface_scope: paved
+    current_status: needs_rate_factor_or_use_hourly_increment_proxy
+    thresholds:
+      speed_reduction_1: 6.35
+      speed_reduction_2: 20.0
+      speed_reduction_3: null
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+    baseline_threshold: '>6.35 mm/h -> speed -4-7%; capacity -10-17%; drainage stress around 20 mm/h'
+    additional_threshold: 50-100 mm/day can trigger road failures / washouts
+    road_impact: pavement erosion; culvert overtopping; bridge stress
+    how_to_use: Use PDF values for speed. Use daily 50-100 mm/day values as a separate failure/washout scenario.
+  - hazard: Extreme rainfall failure scenario
+    surface: paved
+    road_mechanism: daily rainfall -> failures / washouts
+    dataset: era5_land_hourly_total_precipitation
+    factor: era5_tp_daily_sum_weekly_max_mm
+    threshold_metric: maximum daily rainfall total inside each weekly window
+    source_cadence: hourly
+    daily_aggregation: sum_hourly_increments
+    weekly_aggregation: max
+    units: mm_per_day
+    direction: gte
+    surface_scope: paved
+    current_status: runnable_after_overlay_regeneration
+    thresholds:
+      speed_reduction_1: 50.0
+      speed_reduction_2: 75.0
+      speed_reduction_3: null
+      catastrophic_temporary: 100.0
+      catastrophic_permanent: null
+    baseline_threshold: daily rainfall failure/washout scenario, not short-term speed curve
+    additional_threshold: 50-100 mm/day can trigger road failures / washouts
+    road_impact: washouts; culvert overtopping; bridge stress
+    how_to_use: Use only as separate daily failure/washout scenario, not as the PDF speed curve.
+  - hazard: Extreme rainfall
+    surface: unpaved
+    road_mechanism: runoff -> softening -> erosion
+    dataset: era5_land_hourly_total_precipitation
+    factor: era5_tp_1h_max_weekly_mm_per_h
+    threshold_metric: maximum one-hour rainfall intensity inside each weekly window
+    source_cadence: hourly
+    daily_aggregation: max
+    weekly_aggregation: max
+    units: mm_per_hour
+    direction: gte
+    surface_scope: unpaved
+    current_status: runnable_existing_overlay_factor
+    thresholds:
+      speed_reduction_1: 5.0
+      speed_reduction_2: 10.0
+      speed_reduction_3: null
+      catastrophic_temporary: 134.0
+      catastrophic_permanent: 207.7
+    baseline_threshold: runoff starts at ~5 mm/h or 3-6 mm event; erosion proxy >10 mm event; severe erosion domain 134-207.7 mm/h
+    additional_threshold: 50-100 mm/day road failures / washouts
+    road_impact: washouts; erosion; loss of passability
+    how_to_use: Use as left-shifted rainfall curve vs paved roads.
+  - hazard: Extreme rainfall failure scenario
+    surface: unpaved
+    road_mechanism: daily rainfall -> failures / washouts
+    dataset: era5_land_hourly_total_precipitation
+    factor: era5_tp_daily_sum_weekly_max_mm
+    threshold_metric: maximum daily rainfall total inside each weekly window
+    source_cadence: hourly
+    daily_aggregation: sum_hourly_increments
+    weekly_aggregation: max
+    units: mm_per_day
+    direction: gte
+    surface_scope: unpaved
+    current_status: runnable_after_overlay_regeneration
+    thresholds:
+      speed_reduction_1: 50.0
+      speed_reduction_2: 75.0
+      speed_reduction_3: null
+      catastrophic_temporary: 100.0
+      catastrophic_permanent: null
+    baseline_threshold: daily rainfall failure/washout scenario, not short-term erosion-intensity curve
+    additional_threshold: 50-100 mm/day road failures / washouts
+    road_impact: washouts; erosion; loss of passability
+    how_to_use: Use only as separate daily failure/washout scenario, not as the hourly unpaved erosion curve.
+  - hazard: Landslide rainfall
+    surface: both
+    road_mechanism: rainfall-triggered slope failure -> blockage
+    dataset: chirps_daily_precipitation_plus_nasa_landslide_susceptibility
+    factor: chirps_24h_max_weekly_mm
+    threshold_metric: maximum daily 24h rainfall total inside each weekly window
+    source_cadence: daily
+    daily_aggregation: source_daily_total
+    weekly_aggregation: max
+    units: mm_per_24h
+    direction: gte
+    surface_scope: both
+    condition:
+      factor: landslide_susceptibility
+      operator: gte
+      value: 3.0
+    current_status: runnable_if_susceptibility_present
+    thresholds:
+      speed_reduction_1: 140.0
+      speed_reduction_2: 250.0
+      speed_reduction_3: null
+      catastrophic_temporary: 300.0
+      catastrophic_permanent: null
+    baseline_threshold: 140 mm/24h onset; 250 mm/24h damage; 300 mm/24h collapse/debris flow
+    additional_threshold: 30-100 mm/24h can trigger shallow landslides in tropical regions with saturated soils
+    road_impact: road blockage; embankment collapse; erosion damage
+    how_to_use: Use only on susceptible slopes. Additional CSV value is a broader / more conservative trigger band.
+  - hazard: Landslide conservative trigger
+    surface: both
+    road_mechanism: saturated-soil shallow landslide warning
+    dataset: chirps_daily_precipitation_plus_nasa_landslide_susceptibility
+    factor: chirps_24h_max_weekly_mm
+    threshold_metric: maximum daily 24h rainfall total inside each weekly window
+    source_cadence: daily
+    daily_aggregation: source_daily_total
+    weekly_aggregation: max
+    units: mm_per_24h
+    direction: gte
+    surface_scope: both
+    condition:
+      factor: landslide_susceptibility
+      operator: gte
+      value: 3.0
+    current_status: reference_only_conservative_band
+    thresholds:
+      speed_reduction_1: 30.0
+      speed_reduction_2: 100.0
+      speed_reduction_3: null
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+  - hazard: Extreme heat
+    surface: paved
+    road_mechanism: pavement temperature -> binder softening / rutting
+    dataset: pavement_temperature_model
+    factor: pavement_surface_temperature_weekly_max_c
+    threshold_metric: maximum pavement/asphalt temperature inside each weekly window
+    source_cadence: hourly_or_daily
+    daily_aggregation: max
+    weekly_aggregation: max
+    units: celsius
+    direction: gte
+    surface_scope: paved
+    current_status: needs_pavement_temperature_factor
+    thresholds:
+      speed_reduction_1: 45.0
+      speed_reduction_2: 50.0
+      speed_reduction_3: null
+      catastrophic_temporary: 60.0
+      catastrophic_permanent: 70.0
+    baseline_threshold: monitoring 45-50 C; rutting accelerates >50 C; severe rutting 60-70 C
+    additional_threshold: surface degradation >40 C; asphalt binder degradation 45-50 C
+    road_impact: bleeding; rutting; cracking; shortened pavement life
+    how_to_use: Use pavement-surface temperature, not air temperature. Additional CSV gives earlier warning band.
+  - hazard: Extreme heat warning
+    surface: paved
+    road_mechanism: early surface degradation warning
+    dataset: pavement_temperature_model
+    factor: pavement_surface_temperature_weekly_max_c
+    threshold_metric: maximum pavement/asphalt temperature inside each weekly window
+    source_cadence: hourly_or_daily
+    daily_aggregation: max
+    weekly_aggregation: max
+    units: celsius
+    direction: gte
+    surface_scope: paved
+    current_status: reference_only_warning_band
+    thresholds:
+      speed_reduction_1: 40.0
+      speed_reduction_2: 45.0
+      speed_reduction_3: null
+      catastrophic_temporary: 50.0
+      catastrophic_permanent: null
+  - hazard: Drought
+    surface: paved
+    road_mechanism: soil suction / shrink-swell -> cracking
+    dataset: soil_water_retention_model
+    factor: matric_suction_weekly_max_kpa
+    threshold_metric: maximum matric suction inside each weekly window
+    source_cadence: daily_or_monthly
+    daily_aggregation: max
+    weekly_aggregation: max
+    units: kpa
+    direction: gte
+    surface_scope: paved
+    condition:
+      factor: expansive_subgrade_mask
+      operator: eq
+      value: 1
+    current_status: needs_suction_and_expansive_soil_factor
+    thresholds:
+      speed_reduction_1: 700.0
+      speed_reduction_2: 1500.0
+      speed_reduction_3: null
+      catastrophic_temporary: 2000.0
+      catastrophic_permanent: 2500.0
+    baseline_threshold: ~700 kPa onset proxy; 1500 kPa cracking; 2000-2500 kPa serviceability failure
+    additional_threshold: SPI <= -2 severe drought -> soil shrinkage risk
+    road_impact: cracking; settlement; shoulder failures
+    how_to_use: PDF is material/soil variable. CSV is climate-index proxy. Needs soil map.
+  - hazard: Drought climate proxy
+    surface: paved
+    road_mechanism: SPI drought proxy -> soil shrinkage risk
+    dataset: era5_spi_or_drought_index
+    factor: spi_weekly_or_monthly_min
+    threshold_metric: minimum SPI over relevant drought window
+    source_cadence: monthly_or_weekly
+    daily_aggregation: min
+    weekly_aggregation: min
+    units: index
+    direction: lte
+    surface_scope: paved
+    condition:
+      factor: expansive_subgrade_mask
+      operator: eq
+      value: 1
+    current_status: needs_spi_and_soil_mask_contract
+    thresholds:
+      speed_reduction_1: -2.0
+      speed_reduction_2: null
+      speed_reduction_3: null
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+  - hazard: Dust / Harmattan
+    surface: both
+    road_mechanism: visibility loss + sand/dust deposition
+    dataset: visibility_product_or_station_interpolation
+    factor: visibility_weekly_min_m
+    threshold_metric: minimum visibility inside each weekly window
+    source_cadence: hourly_or_daily
+    daily_aggregation: min
+    weekly_aggregation: min
+    units: m
+    direction: lte
+    surface_scope: both
+    current_status: needs_visibility_factor
+    thresholds:
+      speed_reduction_1: 1000.0
+      speed_reduction_2: 500.0
+      speed_reduction_3: null
+      catastrophic_temporary: 50.0
+      catastrophic_permanent: null
+    baseline_threshold: visibility 1000-500 m onset; 500 m friction / operational hazard; 50 m closure
+    additional_threshold: PM10 200-300 ug/m3; PM2.5 100-150 ug/m3; visibility 1-5 km
+    road_impact: reduced visibility; driving hazards; clogged drainage; abrasion
+    how_to_use: Use visibility for mobility. PM values are exposure/context, not direct closure.
+  - hazard: Dust / Harmattan PM context
+    surface: both
+    road_mechanism: PM exposure / dust context
+    dataset: cams_or_air_quality_product
+    factor: pm10_weekly_max_ug_m3
+    threshold_metric: maximum PM10 inside each weekly window
+    source_cadence: hourly_or_daily
+    daily_aggregation: max
+    weekly_aggregation: max
+    units: ug_m3
+    direction: gte
+    surface_scope: both
+    current_status: context_only_not_direct_closure
+    thresholds:
+      speed_reduction_1: 200.0
+      speed_reduction_2: 300.0
+      speed_reduction_3: null
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+  - hazard: Wind / squall lines
+    surface: both
+    road_mechanism: vehicle instability + debris/treefall blockage
+    dataset: era5_land_hourly_u10_v10_plus_road_bearing
+    factor: era5_crosswind_10m_weekly_max_m_s
+    threshold_metric: maximum wind or crosswind speed inside each weekly window
+    source_cadence: hourly
+    daily_aggregation: max
+    weekly_aggregation: max
+    units: m_per_s
+    direction: gte
+    surface_scope: both
+    current_status: partly_runnable_crosswind_only
+    thresholds:
+      speed_reduction_1: 20.0
+      speed_reduction_2: 23.0
+      speed_reduction_3: null
+      catastrophic_temporary: 42.0
+      catastrophic_permanent: 45.0
+    baseline_threshold: 20 m/s HGV rollover risk; 23-30 m/s serious operational risk; 42-45 m/s treefall/blockage proxy
+    additional_threshold: 20-25 m/s damage; >=30 m/s road structure / tree / infrastructure disruption
+    road_impact: fallen trees; debris; roadside damage; culvert/barrier damage
+    how_to_use: Use as operational closure / blockage, not pavement destruction.
+  - hazard: Wind / squall lines damage scenario
+    surface: both
+    road_mechanism: wind damage / infrastructure disruption
+    dataset: wind_gust_or_damage_proxy
+    factor: wind_gust_weekly_max_m_s
+    threshold_metric: maximum wind gust speed inside each weekly window
+    source_cadence: hourly
+    daily_aggregation: max
+    weekly_aggregation: max
+    units: m_per_s
+    direction: gte
+    surface_scope: both
+    current_status: needs_gust_or_blockage_factor
+    thresholds:
+      speed_reduction_1: 20.0
+      speed_reduction_2: 25.0
+      speed_reduction_3: null
+      catastrophic_temporary: 30.0
+      catastrophic_permanent: 42.0
+  - hazard: Urban runoff / impervious surfaces
+    surface: paved
+    road_mechanism: impermeable surface -> runoff -> local flooding
+    dataset: urban_pluvial_or_hydraulic_model
+    factor: urban_pluvial_rain_intensity_weekly_max_mm_per_h
+    threshold_metric: maximum urban rainfall intensity inside each weekly window
+    source_cadence: hourly
+    daily_aggregation: max
+    weekly_aggregation: max
+    units: mm_per_hour
+    direction: gte
+    surface_scope: paved
+    condition:
+      factor: urban_or_hub_mask
+      operator: eq
+      value: 1
+    current_status: needs_urban_hydraulic_factor
+    thresholds:
+      speed_reduction_1: 20.0
+      speed_reduction_2: 36.0
+      speed_reduction_3: null
+      catastrophic_temporary: 78.8
+      catastrophic_permanent: null
+    baseline_threshold: urban runoff anchors 20 mm/h, 36 mm/h, 78.8 mm/h, but audit says 36/78.8 are not universal
+    additional_threshold: '>70% impervious surface linked to increased runoff and flood risk'
+    road_impact: overwhelmed drainage; local flooding; faster surface degradation
+    how_to_use: Use as hub-node risk modifier, not universal road threshold.
+  - hazard: Urban impervious modifier
+    surface: paved
+    road_mechanism: impervious surface runoff risk modifier
+    dataset: worldcover_or_impervious_surface
+    factor: impervious_surface_share_static
+    threshold_metric: static impervious share around hub or road segment
+    source_cadence: static
+    daily_aggregation: none
+    weekly_aggregation: static
+    units: share
+    direction: gte
+    surface_scope: paved
+    condition:
+      factor: urban_or_hub_mask
+      operator: eq
+      value: 1
+    current_status: needs_impervious_surface_factor
+    thresholds:
+      speed_reduction_1: 0.7
+      speed_reduction_2: null
+      speed_reduction_3: null
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+  - hazard: Road roughness / vibration
+    surface: both
+    road_mechanism: damaged/rough road -> vibration exposure
+    dataset: iri_or_roughness_survey
+    factor: iri_static_or_weekly
+    threshold_metric: IRI or roughness class for road segment
+    source_cadence: static_or_survey
+    daily_aggregation: none
+    weekly_aggregation: static
+    units: mm_per_m_or_m_per_km
+    direction: gte
+    surface_scope: both
+    current_status: needs_iri_or_roughness_factor
+    thresholds:
+      speed_reduction_1: 2.0
+      speed_reduction_2: 3.5
+      speed_reduction_3: null
+      catastrophic_temporary: 5.0
+      catastrophic_permanent: 10.0
+    baseline_threshold: IRI good 0.9-2.0; fair 2-3.5; poor 5-10; poor roads about 4x cargo damage / acceleration proxy
+    additional_threshold: rough / unpaved roads linked to higher vibration PSD and mechanical damage
+    road_impact: vibration; cargo stress; lower effective service quality
+    how_to_use: Use only if IRI / roughness class is known. Do not equate all unpaved with 4x.

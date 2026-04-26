@@ -1,0 +1,185 @@
+road_hazard_honest_data_contracts:
+  version: 0.1
+  status: proposal_for_approval
+  principle: >
+    A threshold may be activated only when the model factor has the same physical
+    variable, units, and temporal meaning as the audited threshold. Similar
+    columns are not enough.
+
+  current_engine_blockers:
+    - >
+      The active threshold CSV stores only factor/direction/level/value. It does
+      not store units, source semantics, surface scope, or conditional masks.
+    - >
+      run_weekly_accessibility_pandana currently applies threshold effects only
+      to effective unpaved roads. That is not valid for paved heat/rutting,
+      paved rainfall speed loss, wind restrictions, or flood-depth closure.
+    - >
+      Existing factor names such as flood_weekly and chirps_weekly_mm are too
+      ambiguous for audited thresholds. New factors should encode the actual
+      physical contract in their names.
+
+  exact_factors_buildable_from_existing_raw_data:
+    chirps_24h_max_weekly_mm:
+      source: CHIRPS v3 daily final sat GeoTIFFs
+      raw_paths: data/raw/chirps/global/daily/sat/2024/
+      physical_variable: maximum daily precipitation sampled at the road probe point within the weekly window
+      units: mm_per_24h
+      temporal_contract: max of daily 24h totals inside each model week
+      honest_matches:
+        - landslide_rainfall_24h.speed_loss_onset
+        - landslide_rainfall_24h.partial_damage_onset
+        - landslide_rainfall_24h.unusable_or_closure
+      required_condition:
+        factor: landslide_susceptibility
+        rule: apply only to susceptible road links
+      do_not_use_for:
+        - short_duration_rainfall_intensity_mm_per_hour
+      implementation_change: >
+        Add weekly max-daily CHIRPS sampling beside the current weekly sum.
+
+    era5_tp_1h_max_weekly_mm_per_h:
+      source: ERA5-Land hourly total precipitation
+      raw_paths:
+        - data/raw/era5/era5-land-hourly-gabon-2024-08.nc
+        - data/raw/era5/era5-land-hourly-gabon-2024-09.nc
+        - data/raw/era5/era5-land-hourly-gabon-2024-10.nc
+      physical_variable: maximum one-hour precipitation intensity at the road probe point within the weekly window
+      units: mm_per_hour
+      temporal_contract: reset-aware hourly increments from accumulated ERA5-Land tp, then weekly max
+      honest_matches:
+        - extreme_rainfall_paved.speed_loss_onset
+        - extreme_rainfall_paved.partial_damage_onset
+        - extreme_rainfall_paved.unusable_or_closure_proxy
+        - extreme_rainfall_unpaved.speed_loss_onset
+        - extreme_rainfall_unpaved.unusable_or_closure
+      surface_scope:
+        paved: use paved rainfall anchors
+        unpaved: use unpaved rainfall anchors
+        unknown: scenario-controlled paved_or_unpaved
+      implementation_change: >
+        Add a reset-aware ERA5 accumulated-precipitation reducer. Do not use
+        era5_tp_weekly_sum for thresholding because it is a weekly accumulation
+        column and does not represent mm/h intensity.
+
+    landslide_susceptibility:
+      source: NASA Global Landslide Susceptibility raster
+      raw_path: data/raw/landslide_susceptibility/global/nasa_landslide_susceptibility_gabon.tif
+      physical_variable: static landslide susceptibility class at road probe point
+      units: categorical_class_0_to_5
+      temporal_contract: static conditioning layer
+      honest_matches:
+        - condition_for_landslide_rainfall_24h
+      implementation_change: >
+        Enable the existing landslide_susceptibility overlay path for Gabon and
+        add threshold-engine support for condition_factor masks.
+
+    era5_crosswind_10m_weekly_max_m_s:
+      source: ERA5-Land hourly u10 and v10 plus road geometry bearing
+      raw_paths:
+        - data/raw/era5/era5-land-hourly-gabon-2024-08.nc
+        - data/raw/era5/era5-land-hourly-gabon-2024-09.nc
+        - data/raw/era5/era5-land-hourly-gabon-2024-10.nc
+      physical_variable: maximum 10m crosswind component normal to the road link within the weekly window
+      units: m_per_s
+      temporal_contract: hourly vector wind projected onto road-normal direction, then weekly max
+      honest_matches:
+        - wind_crosswind.speed_loss_onset
+      not_enough_for:
+        - gust_thresholds_23_to_45_m_per_s
+        - treefall_blockage_thresholds
+      implementation_change: >
+        Add a road-bearing based crosswind reducer. Keep severe/catastrophic
+        gust or treefall thresholds inactive until a gust/debris factor exists.
+
+  factors_requiring_new_source_or_model_before_activation:
+    flood_depth_weekly_max_m:
+      needed_for: flood_depth
+      required_physical_variable: standing water depth on road
+      units: m
+      why_current_data_do_not_match: >
+        Current flood_weekly samples Copernicus GFM flood extent / classification,
+        not water depth in meters.
+      acceptable_solution: >
+        Add an actual flood-depth raster/source or a hydrodynamic model output
+        with road-level depth in meters. Until then, flood-depth thresholds must
+        stay inactive.
+
+    pavement_surface_temperature_weekly_max_c:
+      needed_for: extreme_heat_pavement
+      required_physical_variable: pavement/asphalt surface temperature
+      units: celsius
+      why_current_data_do_not_match: >
+        ERA5 skt is skin temperature over the model surface, not measured or
+        modelled road pavement temperature.
+      acceptable_solution: >
+        Add a validated pavement-surface-temperature model or source. Store the
+        result under an explicit pavement-surface factor name before applying
+        heat/rutting thresholds.
+
+    matric_suction_weekly_max_kpa:
+      needed_for: drought_expansive_subgrade
+      required_physical_variable: matric suction in expansive subgrade
+      units: kpa
+      why_current_data_do_not_match: >
+        ERA5 swvl1 is volumetric soil water. It is not suction, and the current
+        Gabon overlay does not include a subgrade/expansive-soil mask.
+      acceptable_solution: >
+        Add Gabon SoilGrids/subgrade inputs and a documented soil-water-retention
+        conversion to matric suction, then apply only on expansive subgrade links.
+
+    visibility_weekly_min_m:
+      needed_for: dust_visibility
+      required_physical_variable: horizontal visibility
+      units: m
+      why_current_data_do_not_match: >
+        CAMS PM and dust AOD are aerosol concentration/optical-depth variables,
+        not road visibility in meters.
+      acceptable_solution: >
+        Add a visibility product/factor in meters. PM/AOD may remain diagnostic
+        but should not trigger visibility thresholds without a validated
+        conversion.
+
+    wind_gust_weekly_max_m_s:
+      needed_for: wind_crosswind severe and catastrophic gust thresholds
+      required_physical_variable: gust speed, ideally projected against road exposure where appropriate
+      units: m_per_s
+      why_current_data_do_not_match: >
+        Current ERA5-Land wind factors are u10/v10 and scalar 10m wind speed,
+        not gust speed.
+      acceptable_solution: >
+        Add a gust-speed variable/source before using 23-45 m/s gust thresholds.
+
+    urban_pluvial_flood_depth_weekly_max_m:
+      needed_for: urban_runoff
+      required_physical_variable: urban pluvial water depth on road or hub links
+      units: m
+      why_current_data_do_not_match: >
+        Rainfall intensity alone is not a transferable urban-runoff threshold.
+      acceptable_solution: >
+        Route rainfall through a hydraulic/pluvial model and then apply the
+        flood-depth contract.
+
+  recommended_activation_sequence:
+    - step: add_exact_overlay_factors
+      factors:
+        - chirps_24h_max_weekly_mm
+        - era5_tp_1h_max_weekly_mm_per_h
+        - landslide_susceptibility
+        - era5_crosswind_10m_weekly_max_m_s
+    - step: replace_threshold_csv_with_semantic_config
+      reason: >
+        Surface scopes and condition masks are required for honest matching.
+    - step: activate_only_exact_matches
+      factors:
+        - chirps_24h_max_weekly_mm conditioned by landslide_susceptibility
+        - era5_tp_1h_max_weekly_mm_per_h with paved/unpaved surface scopes
+        - era5_crosswind_10m_weekly_max_m_s for the 20 m/s operational threshold only
+    - step: leave_gap_factors_inactive
+      factors:
+        - flood_depth_weekly_max_m
+        - pavement_surface_temperature_weekly_max_c
+        - matric_suction_weekly_max_kpa
+        - visibility_weekly_min_m
+        - wind_gust_weekly_max_m_s
+        - urban_pluvial_flood_depth_weekly_max_m

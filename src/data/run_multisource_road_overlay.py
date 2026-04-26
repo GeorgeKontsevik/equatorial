@@ -16,6 +16,7 @@ import pandas as pd
 import rasterio
 import xarray as xr
 import yaml
+from shapely.geometry import LineString, MultiLineString
 from src.data.config import load_config
 from src.data.run_flood_depth_experiment import _country_layer, _geometry_probe_point, _load_roads
 
@@ -79,6 +80,35 @@ def _sample_raster_paths(
         return np.nanmax(stack, axis=0)
 
 
+def _road_unit_vectors(roads: gpd.GeoDataFrame) -> tuple[np.ndarray, np.ndarray]:
+    projected = roads.to_crs(roads.estimate_utm_crs() or "EPSG:3857")
+    ux = np.zeros(len(projected), dtype="float64")
+    uy = np.ones(len(projected), dtype="float64")
+
+    for idx, geom in enumerate(projected.geometry):
+        line: LineString | None = None
+        if isinstance(geom, LineString):
+            line = geom
+        elif isinstance(geom, MultiLineString) and geom.geoms:
+            line = max((part for part in geom.geoms if isinstance(part, LineString)), key=lambda part: part.length, default=None)
+        if line is None or line.is_empty:
+            continue
+        coords = list(line.coords)
+        if len(coords) < 2:
+            continue
+        start = coords[0]
+        end = coords[-1]
+        dx = float(end[0] - start[0])
+        dy = float(end[1] - start[1])
+        length = float(np.hypot(dx, dy))
+        if length <= 0:
+            continue
+        ux[idx] = dx / length
+        uy[idx] = dy / length
+
+    return ux, uy
+
+
 def _period_months(start: date, end: date) -> list[tuple[int, int]]:
     months: list[tuple[int, int]] = []
     cursor = date(start.year, start.month, 1)
@@ -124,12 +154,20 @@ def _sample_netcdf_timeseries(
     *,
     start_date: date | None = None,
     end_date: date | None = None,
+    start_time: pd.Timestamp | None = None,
+    end_time: pd.Timestamp | None = None,
+    include_end_time: bool = False,
 ) -> np.ndarray:
     arr = da
     time_dim = _netcdf_time_dim(arr)
     if time_dim is not None:
         time_index = pd.to_datetime(arr[time_dim].values)
-        if start_date is not None and end_date is not None:
+        if start_time is not None and end_time is not None:
+            mask = (time_index >= start_time) & (time_index <= end_time if include_end_time else time_index < end_time)
+            if not mask.any():
+                return np.full((0, lons.shape[0]), np.nan, dtype="float64")
+            arr = arr.sel({time_dim: arr[time_dim].values[mask]})
+        elif start_date is not None and end_date is not None:
             start_ts = pd.Timestamp(start_date)
             end_ts = pd.Timestamp(end_date) + pd.Timedelta(days=1)
             mask = (time_index >= start_ts) & (time_index < end_ts)
@@ -206,6 +244,136 @@ def _sample_netcdf_wind_speed(
     if u.shape != v.shape:
         return np.full(lons.shape[0], np.nan, dtype="float64")
     return _reduce_sampled_timeseries(np.sqrt(u * u + v * v), reducer, lons.shape[0])
+
+
+def _sample_netcdf_crosswind_speed(
+    ds: xr.Dataset,
+    lons: np.ndarray,
+    lats: np.ndarray,
+    road_ux: np.ndarray,
+    road_uy: np.ndarray,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    reducer: str = "max",
+) -> np.ndarray:
+    if "u10" not in ds or "v10" not in ds:
+        return np.full(lons.shape[0], np.nan, dtype="float64")
+    u = _sample_netcdf_timeseries(ds["u10"], lons, lats, start_date=start_date, end_date=end_date)
+    v = _sample_netcdf_timeseries(ds["v10"], lons, lats, start_date=start_date, end_date=end_date)
+    if u.shape != v.shape:
+        return np.full(lons.shape[0], np.nan, dtype="float64")
+    normal_x = -road_uy.reshape(1, -1)
+    normal_y = road_ux.reshape(1, -1)
+    crosswind = np.abs(u * normal_x + v * normal_y)
+    return _reduce_sampled_timeseries(crosswind, reducer, lons.shape[0])
+
+
+def _era5_hourly_increment_mm(values_m: np.ndarray) -> np.ndarray:
+    if values_m.size == 0:
+        return values_m
+    values = np.asarray(values_m, dtype="float64") * 1000.0
+    if values.shape[0] == 0:
+        return values
+    increments = np.empty_like(values)
+    increments[0, :] = values[0, :]
+    diff = np.diff(values, axis=0)
+    reset_mask = diff < -0.01
+    increments[1:, :] = np.where(reset_mask, values[1:, :], np.maximum(diff, 0.0))
+    increments[~np.isfinite(increments)] = np.nan
+    increments[increments < 0.0] = 0.0
+    return increments
+
+
+def _sample_era5_tp_1h_max_mm_per_h(
+    ds: xr.Dataset,
+    lons: np.ndarray,
+    lats: np.ndarray,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> np.ndarray:
+    if "tp" not in ds:
+        return np.full(lons.shape[0], np.nan, dtype="float64")
+    start_time = pd.Timestamp(start_date) + pd.Timedelta(hours=1) if start_date is not None else None
+    end_time = pd.Timestamp(end_date) + pd.Timedelta(days=1) if end_date is not None else None
+    sampled = _sample_netcdf_timeseries(
+        ds["tp"],
+        lons,
+        lats,
+        start_time=start_time,
+        end_time=end_time,
+        include_end_time=True,
+    )
+    increments = _era5_hourly_increment_mm(sampled)
+    return _reduce_sampled_timeseries(increments, "max", lons.shape[0])
+
+
+def _sample_era5_tp_daily_sum_weekly_max_mm(
+    ds: xr.Dataset,
+    lons: np.ndarray,
+    lats: np.ndarray,
+    *,
+    start_date: date,
+    end_date: date,
+) -> np.ndarray:
+    if "tp" not in ds:
+        return np.full(lons.shape[0], np.nan, dtype="float64")
+
+    daily_sums: list[np.ndarray] = []
+    for day in _iter_days(start_date, end_date):
+        sampled = _sample_netcdf_timeseries(
+            ds["tp"],
+            lons,
+            lats,
+            start_time=pd.Timestamp(day) + pd.Timedelta(hours=1),
+            end_time=pd.Timestamp(day) + pd.Timedelta(days=1),
+            include_end_time=True,
+        )
+        increments = _era5_hourly_increment_mm(sampled)
+        daily_sums.append(_reduce_sampled_timeseries(increments, "sum", lons.shape[0]))
+
+    if not daily_sums:
+        return np.full(lons.shape[0], np.nan, dtype="float64")
+    with np.errstate(invalid="ignore"):
+        return np.nanmax(np.vstack(daily_sums), axis=0)
+
+
+def _find_first_var(ds: xr.Dataset, candidates: tuple[str, ...]) -> str | None:
+    return next((name for name in candidates if name in ds), None)
+
+
+def _sample_era5_rate_mm_per_h(
+    ds: xr.Dataset,
+    candidates: tuple[str, ...],
+    lons: np.ndarray,
+    lats: np.ndarray,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> np.ndarray:
+    name = _find_first_var(ds, candidates)
+    if name is None:
+        return np.full(lons.shape[0], np.nan, dtype="float64")
+    sampled = _sample_netcdf_timeseries(ds[name], lons, lats, start_date=start_date, end_date=end_date)
+    units = str(ds[name].attrs.get("units", "")).lower()
+    factor = 3600.0 if "s" in units else 1.0
+    return _reduce_sampled_timeseries(sampled * factor, "max", lons.shape[0])
+
+
+def _sample_era5_gust_speed(
+    ds: xr.Dataset,
+    lons: np.ndarray,
+    lats: np.ndarray,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> np.ndarray:
+    name = _find_first_var(ds, ("fg10", "i10fg", "10fg"))
+    if name is None:
+        return np.full(lons.shape[0], np.nan, dtype="float64")
+    sampled = _sample_netcdf_timeseries(ds[name], lons, lats, start_date=start_date, end_date=end_date)
+    return _reduce_sampled_timeseries(sampled, "max", lons.shape[0])
 
 
 def _open_era5_dataset(paths: list[Path]) -> xr.Dataset:
@@ -410,6 +578,7 @@ def main() -> None:
     probe_points = gpd.GeoSeries(roads["probe_point"], crs="EPSG:4326")
     lons = np.asarray([pt.x for pt in probe_points], dtype="float64")
     lats = np.asarray([pt.y for pt in probe_points], dtype="float64")
+    road_ux, road_uy = _road_unit_vectors(roads)
 
     layer_columns: list[str] = []
 
@@ -423,6 +592,7 @@ def main() -> None:
         for week_start in week_starts:
             week_end = _week_end(week_start, end_date, step_days)
             col = f"chirps_week_{_week_token(week_start)}_mm"
+            max_24h_col = f"chirps_24h_max_week_{_week_token(week_start)}_mm"
             week_paths = _chirps_daily_paths_for_week(
                 raw_root,
                 version=chirps_version,
@@ -431,7 +601,9 @@ def main() -> None:
                 week_end=week_end,
             )
             roads[col] = _sample_raster_paths(week_paths, probe_points, reducer="sum")
+            roads[max_24h_col] = _sample_raster_paths(week_paths, probe_points, reducer="max")
             layer_columns.append(col)
+            layer_columns.append(max_24h_col)
 
     flood_by_week = _flood_paths_by_week_start(project_root, raw_root, week_starts)
     for week_start in week_starts:
@@ -525,6 +697,63 @@ def main() -> None:
                         reducer=reducer,
                     )
                     layer_columns.append(col)
+                tp_1h_col = f"era5_tp_1h_max_week_{token}_mm_per_h"
+                roads[tp_1h_col] = _sample_era5_tp_1h_max_mm_per_h(
+                    ds,
+                    lons,
+                    lats,
+                    start_date=week_start,
+                    end_date=week_end,
+                )
+                layer_columns.append(tp_1h_col)
+
+                tp_daily_sum_max_col = f"era5_tp_daily_sum_max_week_{token}_mm"
+                roads[tp_daily_sum_max_col] = _sample_era5_tp_daily_sum_weekly_max_mm(
+                    ds,
+                    lons,
+                    lats,
+                    start_date=week_start,
+                    end_date=week_end,
+                )
+                layer_columns.append(tp_daily_sum_max_col)
+
+                crosswind_col = f"era5_crosswind_10m_week_{token}_max"
+                roads[crosswind_col] = _sample_netcdf_crosswind_speed(
+                    ds,
+                    lons,
+                    lats,
+                    road_ux,
+                    road_uy,
+                    start_date=week_start,
+                    end_date=week_end,
+                    reducer="max",
+                )
+                layer_columns.append(crosswind_col)
+
+                gust_col = f"era5_wind_gust_week_{token}_max"
+                gust_values = _sample_era5_gust_speed(
+                    ds,
+                    lons,
+                    lats,
+                    start_date=week_start,
+                    end_date=week_end,
+                )
+                if np.isfinite(gust_values).any():
+                    roads[gust_col] = gust_values
+                    layer_columns.append(gust_col)
+
+                rate_col = f"era5_max_total_precip_rate_week_{token}_mm_per_h"
+                rate_values = _sample_era5_rate_mm_per_h(
+                    ds,
+                    ("mxtpr", "mtpr", "tprate"),
+                    lons,
+                    lats,
+                    start_date=week_start,
+                    end_date=week_end,
+                )
+                if np.isfinite(rate_values).any():
+                    roads[rate_col] = rate_values
+                    layer_columns.append(rate_col)
         finally:
             ds.close()
 

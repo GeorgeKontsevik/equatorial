@@ -1,0 +1,30 @@
+road_hazard_thresholds:
+  version: 0.1
+  status: provisional_24h_road_failure_50_75_100_mar_may
+  source_config: config/road_hazard_impact_curves.yaml
+  note: >
+    Rainfall road-failure sensitivity using weekly maximum daily precipitation
+    total: `chirps_24h_max_weekly_mm` in mm/day. The 50-100 mm/day range is
+    represented as ordered impact levels instead of a single jump: speed
+    reduction starts at 50 mm/day, stronger speed reduction starts at
+    75 mm/day, and temporary one-week closure starts at 100 mm/day.
+
+  rules:
+    - factor: chirps_24h_max_weekly_mm
+      direction: gte
+      surface_scope: all
+      thresholds:
+        minor: 50.0
+        moderate: 75.0
+        severe: 100.0
+        catastrophic: null
+      effects:
+        minor:
+          speed_penalty_fraction: 0.15
+          closure_weeks: null
+        moderate:
+          speed_penalty_fraction: 0.30
+          closure_weeks: null
+        severe:
+          speed_penalty_fraction: null
+          closure_weeks: 1

@@ -13,6 +13,7 @@ import geopandas as gpd
 import numpy as np
 import pandana as pdna
 import pandas as pd
+import yaml
 from shapely.geometry import LineString, MultiLineString
 
 
@@ -29,17 +30,37 @@ FACTOR_PREFIXES = (
     "flopros_",
 )
 
-THRESHOLD_LEVELS = ("minor", "moderate", "severe", "catastrophic")
-SPEED_PENALTY_BY_LEVEL = {"minor": 0.05, "moderate": 0.15}
-CLOSURE_WEEKS_BY_LEVEL = {"severe": 1, "catastrophic": 4}
+THRESHOLD_LEVELS = (
+    "speed_reduction_1",
+    "speed_reduction_2",
+    "speed_reduction_3",
+    "catastrophic_temporary",
+    "catastrophic_permanent",
+)
+LEGACY_THRESHOLD_LEVEL_ALIASES = {
+    "minor": "speed_reduction_1",
+    "moderate": "speed_reduction_2",
+    "severe": "speed_reduction_3",
+    "catastrophic": "catastrophic_temporary",
+}
+SPEED_PENALTY_BY_LEVEL = {"speed_reduction_1": 0.10, "speed_reduction_2": 0.25, "speed_reduction_3": 0.40}
+CLOSURE_WEEKS_BY_LEVEL = {"catastrophic_temporary": 1, "catastrophic_permanent": 5200}
 PANDANA_UNREACHABLE_SENTINEL = np.iinfo(np.uint32).max / 1000.0
 DROUGHT_FACTOR_PREFIX = "era5_spi_"
-DROUGHT_SPEED_PENALTY_BY_LEVEL = {"minor": 0.0, "moderate": 0.05, "severe": 0.10, "catastrophic": 0.15}
+DROUGHT_SPEED_PENALTY_BY_LEVEL = {
+    "speed_reduction_1": 0.0,
+    "speed_reduction_2": 0.05,
+    "speed_reduction_3": 0.10,
+}
 SPEED_ONLY_FACTOR_PREFIXES = (
     "era5_spi_",
     "era5_skt_",
 )
-SPEED_ONLY_PENALTY_BY_LEVEL = {"minor": 0.0, "moderate": 0.05, "severe": 0.10, "catastrophic": 0.15}
+SPEED_ONLY_PENALTY_BY_LEVEL = {
+    "speed_reduction_1": 0.0,
+    "speed_reduction_2": 0.05,
+    "speed_reduction_3": 0.10,
+}
 TEMPERATURE_FACTOR_MARKERS = ("era5_t2m_", "era5_skt_")
 
 
@@ -47,6 +68,18 @@ TEMPERATURE_FACTOR_MARKERS = ("era5_t2m_", "era5_skt_")
 class Scenario:
     name: str
     unknown_surface_mode: str
+
+
+@dataclass(slots=True)
+class ThresholdRule:
+    factor: str
+    direction: str
+    thresholds: dict[str, float]
+    surface_scope: str = "effective_unpaved"
+    condition_factor: str | None = None
+    condition_operator: str = "gte"
+    condition_value: float | str | None = None
+    effects: dict[str, dict[str, object]] | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,10 +96,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overlay-gpkg", type=Path, default=None)
     parser.add_argument("--mapping-distance-m", type=float, default=5000.0)
     parser.add_argument("--isolation-minutes", type=float, default=100000.0)
-    parser.add_argument("--speed-paved-kmh", type=float, default=55.0)
-    parser.add_argument("--speed-unpaved-kmh", type=float, default=28.0)
+    parser.add_argument("--speed-paved-kmh", type=float, default=60.0)
+    parser.add_argument("--speed-unpaved-kmh", type=float, default=50.0)
     parser.add_argument("--min-component-nodes", type=int, default=500)
-    parser.add_argument("--thresholds-csv", type=Path, required=True)
+    parser.add_argument("--thresholds-csv", type=Path, default=None)
+    parser.add_argument("--thresholds-yaml", type=Path, default=None)
     parser.add_argument("--output-root", type=Path, default=None)
     return parser.parse_args()
 
@@ -202,6 +236,16 @@ def _numeric_factor_columns(roads: gpd.GeoDataFrame) -> list[str]:
 
 def _weekly_factor_column(factor: str, week_start: date) -> str | None:
     token = _week_token(week_start)
+    special_weekly = {
+        "chirps_24h_max_weekly_mm": f"chirps_24h_max_week_{token}_mm",
+        "era5_tp_daily_sum_weekly_max_mm": f"era5_tp_daily_sum_max_week_{token}_mm",
+        "era5_tp_1h_max_weekly_mm_per_h": f"era5_tp_1h_max_week_{token}_mm_per_h",
+        "era5_crosswind_10m_weekly_max_m_s": f"era5_crosswind_10m_week_{token}_max",
+        "era5_wind_gust_weekly_max_m_s": f"era5_wind_gust_week_{token}_max",
+        "era5_max_total_precip_rate_weekly_mm_per_h": f"era5_max_total_precip_rate_week_{token}_mm_per_h",
+    }
+    if factor in special_weekly:
+        return special_weekly[factor]
     if factor == "flood_weekly":
         return f"flood_week_{token}"
     if factor == "chirps_weekly_mm":
@@ -229,9 +273,16 @@ def _convert_factor_units(factor: str, values: pd.Series) -> pd.Series:
     return series
 
 
-def _validate_threshold_factor_inputs(roads: gpd.GeoDataFrame, thresholds: dict[str, dict[str, object]], weeks: list[date]) -> None:
+def _validate_threshold_factor_inputs(roads: gpd.GeoDataFrame, rules: list[ThresholdRule], weeks: list[date]) -> None:
     missing: list[str] = []
-    for factor in sorted(thresholds):
+    factors: set[str] = set()
+    for rule in rules:
+        factors.add(rule.factor)
+        if rule.condition_factor:
+            factors.add(rule.condition_factor)
+    for factor in sorted(factors):
+        if factor in roads.columns and pd.api.types.is_numeric_dtype(roads[factor]):
+            continue
         for week_start in weeks:
             col = _weekly_factor_column(factor, week_start)
             if col is None:
@@ -246,7 +297,37 @@ def _validate_threshold_factor_inputs(roads: gpd.GeoDataFrame, thresholds: dict[
         raise RuntimeError(f"Overlay is missing required weekly factor columns for thresholds: {sample}{extra}")
 
 
-def _load_thresholds_from_csv(path: Path) -> dict[str, dict[str, object]]:
+def _threshold_float(value: object) -> float:
+    if value is None:
+        return float("nan")
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    return numeric if np.isfinite(numeric) else float("nan")
+
+
+def _optional_float(value: object) -> float | None:
+    numeric = _threshold_float(value)
+    return None if not np.isfinite(numeric) else float(numeric)
+
+
+def _optional_int(value: object) -> int | None:
+    numeric = _optional_float(value)
+    return None if numeric is None else int(numeric)
+
+
+def _normalise_threshold_mapping(raw: dict, *, path: Path, rule_idx: int, section: str) -> dict[str, object]:
+    values = {level: None for level in THRESHOLD_LEVELS}
+    for raw_level, value in raw.items():
+        level = LEGACY_THRESHOLD_LEVEL_ALIASES.get(str(raw_level), str(raw_level))
+        if level not in values:
+            raise ValueError(f"Unsupported {section} level `{raw_level}` in threshold YAML rule #{rule_idx}: {path}")
+        values[level] = value
+    return values
+
+
+def _load_thresholds_from_csv(path: Path) -> list[ThresholdRule]:
     frame = pd.read_csv(path)
     required = {"factor", "threshold", "threshold_value"}
     if not required.issubset(set(frame.columns)):
@@ -265,7 +346,7 @@ def _load_thresholds_from_csv(path: Path) -> dict[str, dict[str, object]]:
         .mean()
         .dropna(subset=["threshold_value"])
     )
-    thresholds: dict[str, dict[str, object]] = {}
+    rules: list[ThresholdRule] = []
     for factor, part in grouped.groupby("factor"):
         row = {lvl: np.nan for lvl in THRESHOLD_LEVELS}
         for r in part.itertuples(index=False):
@@ -278,11 +359,75 @@ def _load_thresholds_from_csv(path: Path) -> dict[str, dict[str, object]]:
                     direction = dir_vals[0]
             if direction not in {"gte", "lte"}:
                 raise ValueError(f"Unsupported direction `{direction}` for factor `{factor}` in {path}")
-            thresholds[str(factor)] = {
-                "direction": direction,
-                "thresholds": {lvl: float(row[lvl]) for lvl in THRESHOLD_LEVELS},
-            }
-    return thresholds
+            rules.append(
+                ThresholdRule(
+                    factor=str(factor),
+                    direction=direction,
+                    thresholds={lvl: float(row[lvl]) for lvl in THRESHOLD_LEVELS},
+                    surface_scope="effective_unpaved",
+                    effects=None,
+                )
+            )
+    return rules
+
+
+def _load_thresholds_from_yaml(path: Path) -> list[ThresholdRule]:
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    root = payload.get("road_hazard_thresholds", payload) if isinstance(payload, dict) else {}
+    raw_rules = root.get("rules", []) if isinstance(root, dict) else []
+    if not isinstance(raw_rules, list):
+        raise ValueError(f"Threshold YAML must contain a rules list: {path}")
+
+    rules: list[ThresholdRule] = []
+    for idx, item in enumerate(raw_rules, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Threshold YAML rule #{idx} must be a mapping: {path}")
+        factor = str(item.get("factor", "")).strip()
+        if not factor:
+            raise ValueError(f"Threshold YAML rule #{idx} is missing factor: {path}")
+        direction = str(item.get("direction", "gte")).strip().lower()
+        if direction not in {"gte", "gt", "lte", "lt", "eq", "ne"}:
+            raise ValueError(f"Unsupported direction `{direction}` for factor `{factor}` in {path}")
+        raw_thresholds = item.get("thresholds", {}) or {}
+        if not isinstance(raw_thresholds, dict):
+            raise ValueError(f"Threshold YAML rule #{idx} thresholds must be a mapping: {path}")
+        raw_thresholds = _normalise_threshold_mapping(raw_thresholds, path=path, rule_idx=idx, section="threshold")
+        thresholds = {level: _threshold_float(raw_thresholds.get(level)) for level in THRESHOLD_LEVELS}
+        if not any(np.isfinite(value) for value in thresholds.values()):
+            continue
+
+        condition = item.get("condition", {}) or {}
+        if condition and not isinstance(condition, dict):
+            raise ValueError(f"Threshold YAML rule #{idx} condition must be a mapping: {path}")
+        condition_factor = item.get("condition_factor")
+        condition_operator = item.get("condition_operator", "gte")
+        condition_value = item.get("condition_value")
+        if condition:
+            condition_factor = condition.get("factor", condition_factor)
+            condition_operator = condition.get("operator", condition_operator)
+            condition_value = condition.get("value", condition_value)
+
+        effects = item.get("effects")
+        if effects is not None and not isinstance(effects, dict):
+            raise ValueError(f"Threshold YAML rule #{idx} effects must be a mapping: {path}")
+        if effects is not None:
+            effects = _normalise_threshold_mapping(effects, path=path, rule_idx=idx, section="effect")
+
+        rules.append(
+            ThresholdRule(
+                factor=factor,
+                direction=direction,
+                thresholds=thresholds,
+                surface_scope=str(item.get("surface_scope", "all")).strip().lower() or "all",
+                condition_factor=None if condition_factor is None else str(condition_factor).strip(),
+                condition_operator=str(condition_operator).strip().lower(),
+                condition_value=condition_value,
+                effects=effects,
+            )
+        )
+    if not rules:
+        raise ValueError(f"No active threshold rules found in {path}")
+    return rules
 
 
 def _build_edges(roads: gpd.GeoDataFrame, factor_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -396,16 +541,22 @@ def _road_factor_values(roads: gpd.GeoDataFrame, week_start: date) -> dict[str, 
     derived_weekly_factors = [
         "flood_weekly",
         "chirps_weekly_mm",
+        "chirps_24h_max_weekly_mm",
         "era5_t2m_weekly_mean",
         "era5_t2m_weekly_max",
         "era5_skt_weekly_mean",
         "era5_skt_weekly_max",
         "era5_tp_weekly_sum",
+        "era5_tp_daily_sum_weekly_max_mm",
+        "era5_tp_1h_max_weekly_mm_per_h",
         "era5_swvl1_weekly_mean",
         "era5_u10_weekly_mean",
         "era5_v10_weekly_mean",
         "era5_wind_speed_weekly_mean",
         "era5_wind_speed_weekly_max",
+        "era5_crosswind_10m_weekly_max_m_s",
+        "era5_wind_gust_weekly_max_m_s",
+        "era5_max_total_precip_rate_weekly_mm_per_h",
         "cams_pm2p5_weekly_mean",
         "cams_pm2p5_weekly_max",
         "cams_pm10_weekly_mean",
@@ -425,6 +576,81 @@ def _effective_surface(road_surface: pd.Series, unknown_mode: str) -> pd.Series:
     return values.where(values != "unknown", unknown_mode)
 
 
+def _surface_scope_mask(
+    scope: str,
+    *,
+    effective_surface: pd.Series,
+    road_surface: pd.Series,
+    unique_road_ids: np.ndarray,
+) -> np.ndarray:
+    normalized = scope.strip().lower().replace("-", "_")
+    if normalized in {"all", "any", "both", "*"}:
+        return np.ones(len(unique_road_ids), dtype=bool)
+
+    source = effective_surface
+    target = normalized
+    if normalized.startswith("effective_"):
+        target = normalized.removeprefix("effective_")
+    elif normalized.startswith("actual_"):
+        source = road_surface.astype("string").str.lower().fillna("unknown")
+        target = normalized.removeprefix("actual_")
+
+    if target not in {"paved", "unpaved", "unknown"}:
+        raise ValueError(f"Unsupported threshold surface_scope `{scope}`.")
+    return np.asarray([str(source.loc[rid]).lower() == target for rid in unique_road_ids], dtype=bool)
+
+
+def _compare_values(values: np.ndarray, operator: str, threshold: object) -> np.ndarray:
+    op = operator.strip().lower()
+    numeric_threshold = _optional_float(threshold)
+    finite = np.isfinite(values)
+    if numeric_threshold is None:
+        return np.zeros(values.shape, dtype=bool)
+    if op == "gte":
+        return finite & (values >= numeric_threshold)
+    if op == "gt":
+        return finite & (values > numeric_threshold)
+    if op == "lte":
+        return finite & (values <= numeric_threshold)
+    if op == "lt":
+        return finite & (values < numeric_threshold)
+    if op == "eq":
+        return finite & (values == numeric_threshold)
+    if op == "ne":
+        return finite & (values != numeric_threshold)
+    raise ValueError(f"Unsupported threshold comparison operator `{operator}`.")
+
+
+def _dense_factor_values(
+    roads: gpd.GeoDataFrame,
+    factor_values: dict[str, pd.Series],
+    factor: str,
+    unique_road_ids: np.ndarray,
+    road_id_to_dense: dict[int, int],
+) -> np.ndarray:
+    series = factor_values.get(factor)
+    if series is None:
+        series = pd.Series(np.nan, index=roads.index)
+    road_arr = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+    dense_values = np.full(len(unique_road_ids), np.nan, dtype=float)
+    road_dense_idx = np.asarray([road_id_to_dense[int(rid)] for rid in roads["road_row_id"].astype(int)], dtype=int)
+    dense_values[road_dense_idx] = road_arr
+    return dense_values
+
+
+def _condition_mask(
+    rule: ThresholdRule,
+    roads: gpd.GeoDataFrame,
+    factor_values: dict[str, pd.Series],
+    unique_road_ids: np.ndarray,
+    road_id_to_dense: dict[int, int],
+) -> np.ndarray:
+    if not rule.condition_factor:
+        return np.ones(len(unique_road_ids), dtype=bool)
+    values = _dense_factor_values(roads, factor_values, rule.condition_factor, unique_road_ids, road_id_to_dense)
+    return _compare_values(values, rule.condition_operator, rule.condition_value)
+
+
 def _speed_penalty_for_factor(factor: str, level: str) -> float | None:
     if factor.startswith(DROUGHT_FACTOR_PREFIX):
         return DROUGHT_SPEED_PENALTY_BY_LEVEL.get(level)
@@ -437,6 +663,17 @@ def _closure_weeks_for_factor(factor: str, level: str) -> int | None:
     if factor.startswith(SPEED_ONLY_FACTOR_PREFIXES):
         return None
     return CLOSURE_WEEKS_BY_LEVEL.get(level)
+
+
+def _rule_effect(rule: ThresholdRule, level: str) -> tuple[float | None, int | None]:
+    if rule.effects is None:
+        return _speed_penalty_for_factor(rule.factor, level), _closure_weeks_for_factor(rule.factor, level)
+    raw = rule.effects.get(level)
+    if raw is None:
+        return None, None
+    if not isinstance(raw, dict):
+        raise ValueError(f"Effect for {rule.factor}/{level} must be a mapping.")
+    return _optional_float(raw.get("speed_penalty_fraction")), _optional_int(raw.get("closure_weeks"))
 
 
 def _compute_accessibility(
@@ -528,12 +765,21 @@ def main() -> None:
     origins = origins.to_crs(target_crs)
 
     factor_cols = _numeric_factor_columns(roads)
-    thresholds_csv_path = args.thresholds_csv
-    if not thresholds_csv_path.exists():
-        raise FileNotFoundError(f"Missing thresholds CSV: {thresholds_csv_path}")
-    thresholds = _load_thresholds_from_csv(thresholds_csv_path)
-    thresholds_source = f"csv:{thresholds_csv_path}"
-    _validate_threshold_factor_inputs(roads, thresholds, week_starts)
+    if args.thresholds_yaml is not None:
+        thresholds_yaml_path = args.thresholds_yaml
+        if not thresholds_yaml_path.exists():
+            raise FileNotFoundError(f"Missing thresholds YAML: {thresholds_yaml_path}")
+        threshold_rules = _load_thresholds_from_yaml(thresholds_yaml_path)
+        thresholds_source = f"yaml:{thresholds_yaml_path}"
+    elif args.thresholds_csv is not None:
+        thresholds_csv_path = args.thresholds_csv
+        if not thresholds_csv_path.exists():
+            raise FileNotFoundError(f"Missing thresholds CSV: {thresholds_csv_path}")
+        threshold_rules = _load_thresholds_from_csv(thresholds_csv_path)
+        thresholds_source = f"csv:{thresholds_csv_path}"
+    else:
+        raise ValueError("Provide either --thresholds-yaml or --thresholds-csv.")
+    _validate_threshold_factor_inputs(roads, threshold_rules, week_starts)
 
     nodes, edges = _build_edges(roads, factor_cols)
     nodes, edges, comp_filter_stats = _filter_small_components(nodes, edges, args.min_component_nodes)
@@ -584,34 +830,33 @@ def main() -> None:
         close_until = np.full(len(unique_road_ids), -1, dtype=int)
         effective_surface = _effective_surface(road_surface, scenario.unknown_surface_mode)
         unpaved_road_mask = np.asarray([effective_surface.loc[rid] == "unpaved" for rid in unique_road_ids], dtype=bool)
+        road_surface_by_id = road_surface.astype("string").str.lower().fillna("unknown")
 
         for week_idx, week_start in enumerate(week_starts):
             factor_values = _road_factor_values(roads, week_start)
             road_speed_penalty = np.zeros(len(unique_road_ids), dtype=float)
             road_new_closure = np.zeros(len(unique_road_ids), dtype=int)
 
-            for factor, cfg in thresholds.items():
-                direction = str(cfg["direction"])
-                thr = dict(cfg["thresholds"])
-                road_series = pd.to_numeric(factor_values.get(factor, pd.Series(np.nan, index=roads.index)), errors="coerce")
-                road_arr = road_series.to_numpy(dtype=float)
-
-                fill = -np.inf if direction == "gte" else np.inf
-                road_arr = np.where(np.isfinite(road_arr), road_arr, fill)
-                dense_values = np.full(len(unique_road_ids), fill, dtype=float)
-                dense_values[np.asarray([road_id_to_dense[int(rid)] for rid in roads["road_row_id"].astype(int)])] = road_arr
+            for rule in threshold_rules:
+                factor = rule.factor
+                direction = rule.direction
+                dense_values = _dense_factor_values(roads, factor_values, factor, unique_road_ids, road_id_to_dense)
+                applicable_mask = _surface_scope_mask(
+                    rule.surface_scope,
+                    effective_surface=effective_surface,
+                    road_surface=road_surface_by_id,
+                    unique_road_ids=unique_road_ids,
+                )
+                applicable_mask &= _condition_mask(rule, roads, factor_values, unique_road_ids, road_id_to_dense)
+                n_applicable = int(applicable_mask.sum())
 
                 for level in THRESHOLD_LEVELS:
-                    level_threshold = thr[level]
+                    level_threshold = rule.thresholds[level]
                     if not np.isfinite(level_threshold):
                         continue
-                    if direction == "gte":
-                        active_mask = unpaved_road_mask & (dense_values >= level_threshold)
-                    else:
-                        active_mask = unpaved_road_mask & (dense_values <= level_threshold)
+                    active_mask = applicable_mask & _compare_values(dense_values, direction, level_threshold)
                     n_active = int(active_mask.sum())
-                    speed_penalty = _speed_penalty_for_factor(factor, level)
-                    closure_weeks = _closure_weeks_for_factor(factor, level)
+                    speed_penalty, closure_weeks = _rule_effect(rule, level)
                     if speed_penalty is not None:
                         road_speed_penalty[active_mask] = np.maximum(road_speed_penalty[active_mask], speed_penalty)
                     if closure_weeks is not None:
@@ -626,13 +871,19 @@ def main() -> None:
                             "week_start": week_start.isoformat(),
                             "scenario": scenario.name,
                             "factor": factor,
+                            "surface_scope": rule.surface_scope,
+                            "condition_factor": rule.condition_factor,
+                            "condition_operator": rule.condition_operator if rule.condition_factor else None,
+                            "condition_value": rule.condition_value if rule.condition_factor else None,
                             "threshold": level,
                             "threshold_value": float(level_threshold),
                             "effect_type": effect_type,
                             "speed_penalty_fraction": None if speed_penalty is None else float(speed_penalty),
                             "closure_weeks": None if closure_weeks is None else int(closure_weeks),
+                            "n_applicable_roads": n_applicable,
                             "n_triggered_roads": n_active,
                             "share_triggered_unpaved_roads": None if unpaved_road_mask.sum() == 0 else float(n_active / unpaved_road_mask.sum()),
+                            "share_triggered_applicable_roads": None if n_applicable == 0 else float(n_active / n_applicable),
                         }
                     )
 
@@ -714,11 +965,13 @@ def main() -> None:
         "overlay_source": str(overlay_path),
         "isolation_minutes": float(args.isolation_minutes),
         "thresholds_source": thresholds_source,
-        "thresholds_csv_path": str(thresholds_csv_path),
         "baseline_connected_fraction_before_resample": baseline_connected_fraction_before,
         "origins_resampled_for_connectivity": False,
         "baseline_connected_fraction_final": float(baseline_access["connected"].mean()),
         "scenarios": [scenario.name for scenario in scenarios],
+        "threshold_rules_count": int(len(threshold_rules)),
+        "thresholds_yaml_path": None if args.thresholds_yaml is None else str(args.thresholds_yaml),
+        "thresholds_csv_path": None if args.thresholds_csv is None else str(args.thresholds_csv),
         "outputs": {
             "baseline_routes_csv": str((output_dir / "baseline_routes.csv").relative_to(project_root)),
             "weekly_accessibility_csv": str((output_dir / "weekly_accessibility.csv").relative_to(project_root)),

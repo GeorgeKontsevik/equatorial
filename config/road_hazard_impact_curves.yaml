@@ -1,0 +1,248 @@
+road_hazard_impact_curves:
+  version: 0.1
+  status: provisional_audited_anchors
+  source_documents:
+    primary_note: "/Users/gk/Downloads/Continuous impact curves for climate hazards on equatorial plantation logistics roads.pdf"
+    audit_note: "/Users/gk/Documents/thr_audt.pdf"
+  note: >
+    Provisional road-physics anchor values for continuous climate-hazard impact
+    curves on plantation logistics roads. These values are not crop-specific.
+    Crop types should be differentiated later in the consequence layer after
+    road speed loss, delay, or closure has been estimated.
+
+  curve_contract:
+    impact_index_points:
+      no_impact: 0.0
+      speed_loss_onset: 0.08
+      partial_damage_onset: 0.45
+      unusable_or_closure: 1.0
+    recommended_interpolator: pchip_monotone
+    interpretation: >
+      Fit a monotone continuous curve through the listed anchor points. Use
+      impact_index as the road damage / serviceability severity index. Speed
+      penalties and crop losses should be derived downstream rather than by
+      moving these physical thresholds by crop.
+
+  transferability_rules:
+    crop_types:
+      physical_thresholds: shared
+      crop_specific_layer: consequence_after_road_impact
+      note: >
+        Tomato, banana, mango, and other crops should keep the same physical
+        road hazard curves. Later crop-specific modelling should adjust delay
+        sensitivity, quality loss, spoilage, and economic penalty curves.
+    vehicle_class:
+      freight_baseline: hgv_high_sided_lorry
+      note: >
+        Use heavy/high-sided freight vehicles as the conservative accessibility
+        baseline. Do not use emergency-vehicle flood thresholds as normal
+        plantation freight passability thresholds.
+    surface:
+      paved_vs_unpaved: separate_anchor_sets_where_supported
+      note: >
+        Rainfall/runoff anchors may shift left for unpaved roads. Heat distress
+        is more relevant for paved asphalt, especially near hubs and yards.
+
+  hazards:
+    landslide_rainfall_24h:
+      enabled_condition: susceptible_slopes_only
+      factor_contract: landslide_susceptibility_plus_24h_rainfall
+      intensity_variable: rainfall_24h_on_susceptible_slopes
+      units: mm_per_24h
+      direction: gte
+      anchors:
+        no_impact: 0.0
+        speed_loss_onset: 140.0
+        partial_damage_onset: 250.0
+        unusable_or_closure: 300.0
+      uncertainty:
+        speed_loss_onset: [130.0, 150.0]
+        partial_damage_onset: [250.0, 260.0]
+        unusable_or_closure: [300.0, 350.0]
+      confidence: high_for_steep_or_cut_slope_roads
+      audit_status: use_as_landslide_probability_or_blockage_proxy
+      caveats:
+        - Rainfall thresholds are not direct road-damage thresholds.
+        - Use only where slope susceptibility is real; switch off on flat floodplain plantation roads.
+
+    extreme_rainfall_paved:
+      factor_contract: short_duration_rain_intensity
+      intensity_variable: rainfall_intensity
+      units: mm_per_hour
+      direction: gte
+      surface_scope: paved
+      anchors:
+        no_impact: 0.0
+        speed_loss_onset: 6.35
+        partial_damage_onset: 20.0
+        unusable_or_closure: 78.8
+      confidence: medium
+      audit_status: keep_as_anchor_not_universal_closure
+      caveats:
+        - 6.35 mm/h supports speed and capacity reduction, not road destruction.
+        - 78.8 mm/h is a drainage/design exceedance proxy and should not be treated as universal.
+
+    extreme_rainfall_unpaved:
+      factor_contract: short_duration_rain_intensity_or_event_depth_plus_slope_soil
+      intensity_variable: rainfall_intensity
+      units: mm_per_hour
+      direction: gte
+      surface_scope: unpaved
+      anchors:
+        no_impact: 0.0
+        speed_loss_onset: 5.0
+        partial_damage_onset: 10.0
+        unusable_or_closure: 134.0
+      alternate_event_depth_anchors:
+        runoff_onset_event_depth_mm: [3.0, 6.0]
+        erosion_event_depth_mm: 10.0
+      confidence: medium
+      audit_status: keep_as_runoff_and_erosion_proxy
+      caveats:
+        - Unpaved-road damage depends strongly on slope, soil, drainage, and traffic loading.
+        - The severe erosion domain comes from tested high-intensity rainfall, not a universal closure threshold.
+
+    flood_depth:
+      factor_contract: flood_weekly
+      intensity_variable: standing_water_depth_on_road
+      units: m
+      direction: gte
+      anchors:
+        no_impact: 0.0
+        speed_loss_onset: 0.01
+        partial_damage_onset: 0.10
+        unusable_or_closure: 0.30
+      support_points:
+        - depth_m: 0.20
+          impact_index: 0.60
+          note: Pregnolato-style speed-depth curve support point, not a hard closure threshold.
+      closure_reference:
+        passenger_vehicle_m: 0.30
+        emergency_vehicle_m: 0.60
+        agency_conservative_option_m: 0.20
+      confidence: high_for_operations_medium_for_structural_damage
+      audit_status: primary_continuous_curve_for_flood_speed
+      caveats:
+        - Use Pregnolato speed-depth curve for continuous speed loss where possible.
+        - Treat 0.30 m as conservative passenger-vehicle closure; 0.20 m may be an agency rule, not the main curve.
+        - Structural damage depends strongly on inundation duration, not depth alone.
+
+    extreme_heat_pavement:
+      factor_contract: pavement_surface_temperature
+      intensity_variable: pavement_surface_temperature
+      units: celsius
+      direction: gte
+      anchors:
+        no_impact: 20.0
+        speed_loss_onset: 45.0
+        partial_damage_onset: 50.0
+        unusable_or_closure: 65.0
+      uncertainty:
+        speed_loss_onset: [45.0, 50.0]
+        partial_damage_onset: [50.0, 58.0]
+        unusable_or_closure: [60.0, 75.0]
+      ambient_to_surface_modifier:
+        urban_pavement_surface_delta_c: [15.0, 25.0]
+        ambient_gt_40c_surface_range_c: [65.0, 75.0]
+      confidence: medium
+      audit_status: damage_layer_only_not_direct_speed_threshold
+      caveats:
+        - Do not claim that pavement temperature above 50 C directly slows traffic.
+        - Feed air temperature through a pavement-surface transform before using this curve.
+
+    drought_expansive_subgrade:
+      enabled_condition: expansive_clay_subgrade_only
+      factor_contract: matric_suction_or_soil_moisture_proxy
+      intensity_variable: matric_suction
+      units: kpa
+      direction: gte
+      anchors:
+        no_impact: 0.0
+        speed_loss_onset: 700.0
+        partial_damage_onset: 1500.0
+        unusable_or_closure: 2250.0
+      uncertainty:
+        unusable_or_closure: [2000.0, 2500.0]
+      auxiliary_anchor:
+        moisture_content_below_percent: 15.0
+        duration_gt_months: 1.0
+      confidence: low_to_medium
+      audit_status: subgrade_cracking_proxy_only
+      caveats:
+        - Drought speed reduction is not source-backed as a direct traffic threshold.
+        - For unpaved roads, model operational speed loss through dust or roughness after damage.
+
+    dust_visibility:
+      factor_contract: visibility_or_dust_proxy
+      intensity_variable: visibility
+      units: m
+      direction: lte
+      anchors:
+        no_impact: 10000.0
+        speed_loss_onset: 1000.0
+        partial_damage_onset: 500.0
+        unusable_or_closure: 50.0
+      support_points:
+        - visibility_m: 500.0
+          speed_reduction_fraction: 0.061
+      confidence: high_for_closure_low_for_structural_damage
+      audit_status: visibility_to_speed_not_road_damage
+      caveats:
+        - Use for operational closure and speed loss.
+        - Road damage should only be modelled as sand deposition, skid loss, or burial proxy where locally plausible.
+
+    wind_crosswind:
+      factor_contract: crosswind_or_gust_speed
+      intensity_variable: crosswind_or_gust_speed
+      units: m_per_s
+      direction: gte
+      anchors:
+        no_impact: 0.0
+        speed_loss_onset: 20.0
+        partial_damage_onset: 30.0
+        unusable_or_closure: 45.0
+      uncertainty:
+        partial_damage_onset: [23.0, 45.0]
+        unusable_or_closure: [42.0, 45.0]
+      confidence: high_for_operational_closure_low_for_pavement_damage
+      audit_status: vehicle_restriction_and_indirect_blockage_only
+      caveats:
+        - Do not describe 42 m/s as direct road destruction.
+        - Treefall around 42 m/s is contested and should be a weak blockage proxy only.
+
+    urban_runoff:
+      recommended_handling: rainfall_to_hydraulic_model_to_flood_depth
+      factor_contract: pluvial_model_output_preferred
+      intensity_variable: urban_pluvial_rainfall_intensity
+      units: mm_per_hour
+      direction: gte
+      anchors:
+        no_impact: 0.0
+        speed_loss_onset: 20.0
+        partial_damage_onset: null
+        unusable_or_closure: null
+      non_transferable_reference_values:
+        hamburg_100y_event_mm_per_hour: 36.0
+        taipei_drainage_design_mm_per_hour: 78.8
+      confidence: low_as_direct_threshold_medium_as_compound_hazard
+      audit_status: do_not_use_as_universal_threshold
+      caveats:
+        - Prefer rainfall -> hydraulic model -> flood depth -> Pregnolato/Kramer.
+        - Keep 36 mm/h and 78.8 mm/h as scenario/design references only.
+
+  crop_specific_consequence_placeholders:
+    status: intentionally_not_calibrated
+    note: >
+      Future crop-specific values belong here or in a sibling crop-loss config.
+      These should change loss/delay sensitivity, not the road hazard anchors
+      above.
+    crop_types:
+      tomato:
+        delay_sensitivity: todo
+        quality_loss_curve: todo
+      banana:
+        delay_sensitivity: todo
+        quality_loss_curve: todo
+      mango:
+        delay_sensitivity: todo
+        quality_loss_curve: todo

@@ -1,0 +1,28 @@
+road_hazard_thresholds:
+  version: 0.1
+  status: provisional_24h_rain_only_mar_may
+  source_config: config/road_hazard_impact_curves.yaml
+  note: >
+    Rain-only rerun using weekly maximum daily precipitation total:
+    `chirps_24h_max_weekly_mm` in mm/24h. ERA5 1-hour rainfall intensity
+    is intentionally excluded from this run.
+
+  rules:
+    - factor: chirps_24h_max_weekly_mm
+      direction: gte
+      surface_scope: all
+      thresholds:
+        minor: 140.0
+        moderate: 250.0
+        severe: 300.0
+        catastrophic: null
+      effects:
+        minor:
+          speed_penalty_fraction: 0.05
+          closure_weeks: null
+        moderate:
+          speed_penalty_fraction: 0.15
+          closure_weeks: null
+        severe:
+          speed_penalty_fraction: null
+          closure_weeks: 1

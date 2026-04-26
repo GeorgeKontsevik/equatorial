@@ -119,6 +119,12 @@ The preview PNGs are written to:
 Planning-only road-climate damage configuration now also lives in:
 
 - `config/road_climate_damage.yaml`
+- `config/road_hazard_impact_curves.yaml`
+- `config/road_hazard_honest_data_contracts.yaml`
+- `config/road_hazard_honest_matching_solution.md`
+- `config/road_hazard_additional_data_needs.md`
+- `config/road_hazard_data_mapping_approval.csv`
+- `config/road_hazard_data_mapping_approval.md`
 - `config/crop_transport_loss.yaml`
 
 That file is intended as a future configuration contract for climate-driven road effects.
@@ -252,6 +258,11 @@ Current first-pass `Flood Depth` mock thresholds:
 - `Moderate`: `0.2 m`
 - `Severe`: `0.3 m`
 - `Catastrophic`: `0.5 m`
+
+Audited continuous-curve anchors are now separated into
+[road_hazard_impact_curves.yaml](/Users/gk/Code/super-duper-disser/equatorial/config/road_hazard_impact_curves.yaml:1).
+That file keeps road-physics thresholds shared across crops and reserves crop-specific differences
+for later consequence curves after speed loss, delay, or closure is estimated.
 
 Deferred indicators still left editable in that config:
 

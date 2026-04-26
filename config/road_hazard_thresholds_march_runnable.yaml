@@ -1,0 +1,85 @@
+road_hazard_thresholds:
+  version: 0.1
+  status: runnable_subset_for_march_overlay
+  source_table: config/weekly_hazard_thresholds_strict.csv
+  threshold_slots:
+    speed_reduction_1:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.1
+    speed_reduction_2:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.25
+    speed_reduction_3:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.4
+    catastrophic_temporary:
+      effect_type: temporary_closure
+      closure_weeks: 1
+    catastrophic_permanent:
+      effect_type: permanent_closure
+      closure_weeks: 5200
+  rules:
+    - hazard: Extreme rainfall failure scenario
+      surface: paved
+      factor: era5_tp_daily_sum_weekly_max_mm
+      direction: gte
+      surface_scope: paved
+      current_status: runnable_after_overlay_regeneration
+      thresholds:
+        speed_reduction_1: 50.0
+        speed_reduction_2: 75.0
+        speed_reduction_3: null
+        catastrophic_temporary: 100.0
+        catastrophic_permanent: null
+    - hazard: Extreme rainfall
+      surface: unpaved
+      factor: era5_tp_1h_max_weekly_mm_per_h
+      direction: gte
+      surface_scope: unpaved
+      current_status: runnable_existing_overlay_factor
+      thresholds:
+        speed_reduction_1: 5.0
+        speed_reduction_2: 10.0
+        speed_reduction_3: null
+        catastrophic_temporary: 134.0
+        catastrophic_permanent: 207.7
+    - hazard: Extreme rainfall failure scenario
+      surface: unpaved
+      factor: era5_tp_daily_sum_weekly_max_mm
+      direction: gte
+      surface_scope: unpaved
+      current_status: runnable_after_overlay_regeneration
+      thresholds:
+        speed_reduction_1: 50.0
+        speed_reduction_2: 75.0
+        speed_reduction_3: null
+        catastrophic_temporary: 100.0
+        catastrophic_permanent: null
+    - hazard: Landslide rainfall
+      surface: both
+      factor: chirps_24h_max_weekly_mm
+      direction: gte
+      surface_scope: both
+      condition:
+        factor: landslide_susceptibility
+        operator: gte
+        value: 3.0
+      current_status: runnable_if_susceptibility_present
+      thresholds:
+        speed_reduction_1: 140.0
+        speed_reduction_2: 250.0
+        speed_reduction_3: null
+        catastrophic_temporary: 300.0
+        catastrophic_permanent: null
+    - hazard: Wind / squall lines
+      surface: both
+      factor: era5_crosswind_10m_weekly_max_m_s
+      direction: gte
+      surface_scope: both
+      current_status: partly_runnable_crosswind_only
+      thresholds:
+        speed_reduction_1: 20.0
+        speed_reduction_2: 23.0
+        speed_reduction_3: null
+        catastrophic_temporary: 42.0
+        catastrophic_permanent: 45.0
