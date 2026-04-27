@@ -1,0 +1,162 @@
+global:
+  data_root: data
+  timeout_seconds: 300
+  max_retries: 3
+  user_agent: equatorial-data-fetch/0.1.0
+
+study_area:
+  country_code: NAM
+  country_name: Namibia
+  slug: namibia
+  geofabrik_id: africa/namibia
+  bbox: [11.734862327000144, -28.96944999999988, 25.267707964000067, -16.95989036499992]
+
+datasets:
+  gadm:
+    enabled: true
+    source_url: https://geodata.ucdavis.edu/gadm/gadm4.1/gpkg
+    spatial_resolution_raw: vector administrative boundaries
+
+  osm:
+    enabled: false
+    extract_format: pbf
+    source_url: https://download.geofabrik.de/index-v1-nogeom.json
+
+  road_surface:
+    enabled: true
+    source_url: https://data.humdata.org/organization/heidelberg-institute-for-geoinformation-technology?dataseries_name=Heidelberg%20Institute%20for%20Geoinformation%20Technology%20-%20Road%20Surface%20Data&q=&ext_page_size=25
+    spatial_resolution_raw: vector road segments with binary paved/unpaved attribution (country releases)
+
+  chirps:
+    enabled: true
+    version: v3.0
+    frequency: daily
+    region: global
+    daily_variant: sat
+    start_date: "2024-09-01"
+    end_date: "2024-11-30"
+    temporal_resolution: daily
+
+  era5:
+    enabled: true
+    dataset_id: reanalysis-era5-land
+    spatial_resolution_raw: 0.1 degree grid
+    temporal_resolution: hourly
+    split_request_by: weekly
+    request_step_days: 7
+    start_date: "2024-09-01"
+    end_date: "2024-11-30"
+    target_prefix: era5-land-hourly-{slug}
+    request:
+      product_type: reanalysis
+      variable:
+        - 2m_temperature
+        - skin_temperature
+        - total_precipitation
+        - volumetric_soil_water_layer_1
+        - 10m_u_component_of_wind
+        - 10m_v_component_of_wind
+      time:
+        - "00:00"
+        - "01:00"
+        - "02:00"
+        - "03:00"
+        - "04:00"
+        - "05:00"
+        - "06:00"
+        - "07:00"
+        - "08:00"
+        - "09:00"
+        - "10:00"
+        - "11:00"
+        - "12:00"
+        - "13:00"
+        - "14:00"
+        - "15:00"
+        - "16:00"
+        - "17:00"
+        - "18:00"
+        - "19:00"
+        - "20:00"
+        - "21:00"
+        - "22:00"
+        - "23:00"
+      data_format: netcdf
+      download_format: unarchived
+      area: [-16.95989036499992, 11.734862327000144, -28.96944999999988, 25.267707964000067]
+
+  flood:
+    enabled: true
+    source_url: https://global-flood.emergency.copernicus.eu/react/general-information/data-access/
+    stac_api_url: https://stac.eodc.eu/api/v1/search
+    collection_id: GFM
+    asset_key: ensemble_flood_extent
+    product: GFM
+    start_date: "2024-09-01"
+    end_date: "2024-11-30"
+    aggregation_period_days: 7
+    spatial_resolution_raw: 20 m Sentinel-1 SAR flood extent (GFM ensemble)
+    temporal_resolution: event-based SAR acquisitions, sampled weekly (7-day windows)
+
+  landslide_susceptibility:
+    enabled: true
+    source_url: https://gis.earthdata.nasa.gov/gis05/rest/services/Landslides/Global_Landslide_Susceptibility/ImageServer
+    spatial_resolution_raw: global landslide susceptibility image service at approximately 30 arc-seconds
+    temporal_resolution: static susceptibility ranking
+    export_resolution_deg: 0.008333333333333333
+    target_slug: "{slug}"
+
+  cams:
+    enabled: true
+    dataset_id: cams-global-reanalysis-eac4
+    source_url: https://ads.atmosphere.copernicus.eu/datasets/cams-global-reanalysis-eac4
+    spatial_resolution_raw: 0.75 degree global atmospheric composition grid
+    temporal_resolution: 3-hourly
+    target_filename: cams-eac4-3hourly-{slug}-2024-09_to_2024-11.nc
+    request:
+      date: ["2024-09-01/2024-11-30"]
+      time:
+        - "00:00"
+        - "03:00"
+        - "06:00"
+        - "09:00"
+        - "12:00"
+        - "15:00"
+        - "18:00"
+        - "21:00"
+      variable:
+        - particulate_matter_2.5um
+        - particulate_matter_10um
+        - dust_aerosol_optical_depth_550nm
+      area: [-16.95989036499992, 11.734862327000144, -28.96944999999988, 25.267707964000067]
+      format: netcdf
+
+  gem:
+    enabled: true
+    source_url: https://zenodo.org/records/8409647/files/GEM-GSHM_PGA-475y-rock_v2023.zip?download=1
+    spatial_resolution_raw: global seismic hazard raster interpolated from hazard values calculated at about ~6 km point spacing
+
+  liquefaction:
+    enabled: true
+    source_url: https://zenodo.org/records/2583746/files/liquefaction_v1_deg.tif?download=1
+    spatial_resolution_raw: global raster in EPSG:4326; susceptibility classes 0-5 from the Zhu model family
+
+  flopros:
+    enabled: true
+    source_url: https://nhess.copernicus.org/articles/16/1049/2016/nhess-16-1049-2016-supplement.zip
+    spatial_resolution_raw: protection-standard metadata from the official FLOPROS supplement (shapefile and workbook)
+
+  coastaldem:
+    enabled: false
+
+  soilgrids:
+    enabled: false
+
+  worldcover:
+    enabled: false
+
+  era5_spi:
+    enabled: false
+
+  ibtracs:
+    enabled: false

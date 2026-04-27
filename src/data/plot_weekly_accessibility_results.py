@@ -30,11 +30,14 @@ def _plot_access(
     *,
     value_column: str,
     title: str,
+    baseline_minutes: float | None = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(11.0, 5.8))
     for scenario in sorted(summary["scenario"].unique()):
         subset = summary.loc[summary["scenario"] == scenario].sort_values("week_start")
         ax.plot(subset["week_start"], subset[value_column], marker="o", label=scenario)
+    if baseline_minutes is not None and np.isfinite(baseline_minutes):
+        ax.axhline(float(baseline_minutes), color="#111111", linestyle="--", linewidth=1.4, label="baseline")
     ax.set_title(title)
     ax.set_xlabel("Week start")
     ax.set_ylabel("Minutes")
@@ -190,6 +193,15 @@ def main() -> None:
     if not access_csv.exists():
         raise FileNotFoundError(f"Missing {access_csv}")
     access = pd.read_csv(access_csv)
+    baseline_csv = args.results_dir / "baseline_routes.csv"
+    baseline = pd.read_csv(baseline_csv) if baseline_csv.exists() else pd.DataFrame()
+    baseline_median = None
+    baseline_connected_median = None
+    if not baseline.empty:
+        baseline_median = float(pd.to_numeric(baseline["access_minutes"], errors="coerce").median())
+        connected = baseline.loc[baseline["connected"].astype(bool)].copy()
+        if not connected.empty:
+            baseline_connected_median = float(pd.to_numeric(connected["access_minutes"], errors="coerce").median())
 
     connected_summary = _connected_summary(access)
     _round_output_frame(connected_summary).to_csv(args.results_dir / "weekly_connected_summary.csv", index=False)
@@ -199,12 +211,14 @@ def main() -> None:
         args.results_dir / "weekly_median_access_minutes.png",
         value_column="median_access_minutes",
         title="Weekly Median Accessibility, All Origins (disconnected = isolation minutes)",
+        baseline_minutes=baseline_median,
     )
     _plot_access(
         connected_summary,
         args.results_dir / "weekly_connected_median_access_minutes.png",
         value_column="connected_median_access_minutes",
         title="Weekly Median Accessibility, Connected Origins Only",
+        baseline_minutes=baseline_connected_median,
     )
     _plot_connectivity(summary, args.results_dir / "weekly_connected_share.png")
     top = _plot_factor_heatmap(factors, args.results_dir / "weekly_factor_threshold_heatmap.png", args.top_factors)
@@ -221,6 +235,8 @@ def main() -> None:
             "weekly_access_boxplot_all": str(args.results_dir / "weekly_access_boxplot_all.png"),
             "weekly_access_boxplot_connected_only": str(args.results_dir / "weekly_access_boxplot_connected_only.png"),
         },
+        "baseline_median_access_minutes": baseline_median,
+        "baseline_connected_median_access_minutes": baseline_connected_median,
         "top_factors_in_heatmap": top,
     }
     (args.results_dir / "plot_summary.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

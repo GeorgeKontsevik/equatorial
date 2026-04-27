@@ -160,6 +160,31 @@ def _existing_cities_file(project_root: Path, iso3: str, threshold: int) -> Path
     return None
 
 
+def _build_cities_cache(project_root: Path, iso3: str, threshold: int) -> Path:
+    from src.data.run_road_monthly_scenarios import _load_cities
+
+    out_dir = project_root / "outputs" / "road_scenarios" / iso3 / f"geonames_pop{threshold}"
+    cities_path = out_dir / "cities_over_threshold.gpkg"
+    summary_path = out_dir / "summary.json"
+    if cities_path.exists():
+        return cities_path
+
+    print(f"[weekly-access] building cities cache iso={iso3} threshold={threshold}", flush=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cities = _load_cities(project_root, iso3, threshold, "EPSG:4326")
+    cities.to_file(cities_path, driver="GPKG")
+    summary = {
+        "country_code": iso3,
+        "city_population_threshold": int(threshold),
+        "cities_over_threshold": int(len(cities)),
+        "cities_crs": str(cities.crs),
+        "source": "GeoNames",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return cities_path
+
+
 def _existing_origins_file(project_root: Path, iso3: str) -> Path | None:
     base = project_root / "outputs" / "road_scenarios" / iso3
     if not base.exists():
@@ -185,10 +210,7 @@ def _resolve_cities(project_root: Path, iso3: str, threshold: int, provided: Pat
         return provided
     cached = _existing_cities_file(project_root, iso3, threshold)
     if cached is None:
-        raise FileNotFoundError(
-            f"No cached cities_over_threshold.gpkg found for threshold {threshold}. "
-            "Pass --cities-file explicitly or run the monthly scenario once."
-        )
+        return _build_cities_cache(project_root, iso3, threshold)
     return cached
 
 

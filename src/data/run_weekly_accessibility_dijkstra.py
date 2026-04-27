@@ -14,6 +14,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import dijkstra
 from scipy.spatial import cKDTree
 
+from src.data.run_road_monthly_scenarios import _country_layers
 from src.data.run_weekly_accessibility_pandana import (
     Scenario,
     _compare_values,
@@ -117,6 +118,36 @@ def _compute_accessibility_dijkstra(
     return result
 
 
+def _filter_points_strictly_inside_country(
+    *,
+    project_root: Path,
+    iso3: str,
+    points: gpd.GeoDataFrame,
+    label: str,
+    output_dir: Path,
+) -> tuple[gpd.GeoDataFrame, dict[str, object]]:
+    country, _ = _country_layers(project_root, iso3)
+    country_wgs84 = country.to_crs("EPSG:4326")
+    points_wgs84 = points.to_crs("EPSG:4326")
+    territory = country_wgs84.geometry.union_all()
+    inside = points_wgs84.geometry.within(territory).fillna(False)
+    outside = points_wgs84.loc[~inside].copy()
+    if not outside.empty:
+        outside_csv = output_dir / f"{label}_outside_territory.csv"
+        pd.DataFrame(outside.drop(columns="geometry")).to_csv(outside_csv, index=False)
+        print(f"[dijkstra] {label}_outside_territory={len(outside)} filtered report={outside_csv}", flush=True)
+    filtered = points.loc[inside.to_numpy()].copy()
+    if filtered.empty:
+        raise RuntimeError(f"All {label} points are outside the {iso3} territory polygon.")
+    return filtered, {
+        "label": label,
+        "input_count": int(len(points)),
+        "inside_count": int(len(filtered)),
+        "outside_count": int(len(outside)),
+        "predicate": "point.within(country polygon in EPSG:4326)",
+    }
+
+
 def main() -> None:
     args = parse_args()
     project_root = _project_root()
@@ -145,6 +176,25 @@ def main() -> None:
     origins = gpd.read_file(origins_path)
     if roads.empty or cities.empty or origins.empty:
         raise RuntimeError("One of required layers is empty (roads/cities/origins).")
+    origins, origin_geometry_report = _filter_points_strictly_inside_country(
+        project_root=project_root,
+        iso3=iso3,
+        points=origins,
+        label="origins",
+        output_dir=output_dir,
+    )
+    cities, city_geometry_report = _filter_points_strictly_inside_country(
+        project_root=project_root,
+        iso3=iso3,
+        points=cities,
+        label="cities",
+        output_dir=output_dir,
+    )
+    geometry_validation = {
+        "territory_source": iso3,
+        "checks": [origin_geometry_report, city_geometry_report],
+    }
+    (output_dir / "geometry_validation.json").write_text(json.dumps(geometry_validation, indent=2), encoding="utf-8")
 
     target_crs = roads.estimate_utm_crs()
     if target_crs is None:
@@ -355,6 +405,7 @@ def main() -> None:
         "scenarios": [scenario.name for scenario in scenarios],
         "threshold_rules_count": int(len(threshold_rules)),
         "skipped_threshold_rules": skipped_threshold_rules,
+        "geometry_validation": geometry_validation,
         "outputs": {
             "baseline_routes_csv": _relpath(output_dir / "baseline_routes.csv", project_root),
             "weekly_accessibility_csv": _relpath(output_dir / "weekly_accessibility.csv", project_root),

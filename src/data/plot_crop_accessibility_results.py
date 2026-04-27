@@ -52,7 +52,18 @@ def _read_inputs(results_dir: Path) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame,
 
 
 def _crop_stats(origins: gpd.GeoDataFrame, baseline: pd.DataFrame, weekly: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    origin_cols = ["origin_id", "crop_code", "crop_name", "crop_rank", "source_crop_rank", "harvested_area_index"]
+    origin_cols = [
+        "origin_id",
+        "crop_code",
+        "crop_name",
+        "crop_rank",
+        "source_crop_rank",
+        "harvested_area_index",
+        "cluster_id",
+        "cluster_n_cells",
+        "cluster_harvested_area_index",
+        "selection_method",
+    ]
     available_cols = [col for col in origin_cols if col in origins.columns]
     origin_meta = pd.DataFrame(origins.drop(columns="geometry"))[available_cols].copy()
     base = baseline.rename(columns={"access_minutes": "baseline_access_minutes", "connected": "baseline_connected"})
@@ -160,16 +171,42 @@ def _plot_origin_map(
     plt.close(fig)
 
 
-def _plot_crop_lines(stats: pd.DataFrame, out_path: Path, *, metric: str, ylabel: str, title: str) -> None:
+def _plot_crop_lines(
+    stats: pd.DataFrame,
+    out_path: Path,
+    *,
+    metric: str,
+    ylabel: str,
+    title: str,
+    baseline_metric: str | None = None,
+) -> None:
     scenarios = stats["scenario"].drop_duplicates().tolist()
     fig, axes = plt.subplots(len(scenarios), 1, figsize=(11.5, 4.0 * len(scenarios)), sharex=True)
     if len(scenarios) == 1:
         axes = [axes]
+    crops = sorted(stats["crop_code"].dropna().unique())
+    cmap = plt.get_cmap("tab20", max(len(crops), 1))
+    crop_colors = {crop: cmap(idx) for idx, crop in enumerate(crops)}
     for ax, scenario in zip(axes, scenarios, strict=False):
         subset = stats.loc[stats["scenario"].eq(scenario)].copy()
-        for crop in sorted(subset["crop_code"].dropna().unique()):
+        for crop in crops:
             part = subset.loc[subset["crop_code"].eq(crop)].sort_values("week_start")
-            ax.plot(part["week_start"], part[metric], marker="o", linewidth=1.6, label=crop)
+            if part.empty:
+                continue
+            color = crop_colors[crop]
+            ax.plot(part["week_start"], part[metric], color=color, marker="o", linewidth=1.6, label=crop)
+            if baseline_metric is not None and baseline_metric in part.columns:
+                baseline_values = pd.to_numeric(part[baseline_metric], errors="coerce")
+                if baseline_values.notna().any():
+                    ax.plot(
+                        part["week_start"],
+                        baseline_values,
+                        color=color,
+                        linestyle="--",
+                        linewidth=1.1,
+                        alpha=0.72,
+                        label=f"{crop} baseline",
+                    )
         ax.set_title(scenario)
         ax.set_ylabel(ylabel)
         ax.grid(alpha=0.25)
@@ -180,6 +217,38 @@ def _plot_crop_lines(stats: pd.DataFrame, out_path: Path, *, metric: str, ylabel
     fig.tight_layout()
     fig.savefig(out_path, dpi=170)
     plt.close(fig)
+
+
+def _safe_token(value: object) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value)).strip("_") or "unknown"
+
+
+def _plot_per_crop_median_access(stats: pd.DataFrame, out_dir: Path) -> list[str]:
+    outputs: list[str] = []
+    for crop in sorted(stats["crop_code"].dropna().unique()):
+        subset = stats.loc[stats["crop_code"].eq(crop)].copy()
+        if subset.empty:
+            continue
+        crop_name = str(subset["crop_name"].dropna().iloc[0]) if subset["crop_name"].notna().any() else str(crop)
+        fig, ax = plt.subplots(figsize=(10.5, 5.2))
+        for scenario in sorted(subset["scenario"].dropna().unique()):
+            part = subset.loc[subset["scenario"].eq(scenario)].sort_values("week_start")
+            ax.plot(part["week_start"], part["median_access_minutes"], marker="o", linewidth=1.7, label=scenario)
+        baseline = pd.to_numeric(subset["baseline_median_minutes"], errors="coerce").dropna()
+        if not baseline.empty:
+            ax.axhline(float(baseline.iloc[0]), color="#111111", linestyle="--", linewidth=1.3, label="baseline")
+        ax.set_title(f"{crop} {crop_name}: Median Access Minutes")
+        ax.set_xlabel("Week start")
+        ax.set_ylabel("median access minutes")
+        ax.grid(alpha=0.25)
+        ax.legend(fontsize=8)
+        fig.autofmt_xdate(rotation=45)
+        fig.tight_layout()
+        out_path = out_dir / f"crop_weekly_median_access_minutes__{_safe_token(crop)}.png"
+        fig.savefig(out_path, dpi=170)
+        plt.close(fig)
+        outputs.append(out_path.name)
+    return outputs
 
 
 def main() -> None:
@@ -223,6 +292,15 @@ def main() -> None:
 
     _plot_crop_lines(
         weekly_stats,
+        out_dir / "crop_weekly_median_access_minutes.png",
+        metric="median_access_minutes",
+        baseline_metric="baseline_median_minutes",
+        ylabel="median access minutes",
+        title="Crop-Type Median Accessibility",
+    )
+    per_crop_median_outputs = _plot_per_crop_median_access(weekly_stats, out_dir)
+    _plot_crop_lines(
+        weekly_stats,
         out_dir / "crop_weekly_median_delta_minutes.png",
         metric="median_delta_minutes",
         ylabel="median delta minutes",
@@ -236,7 +314,13 @@ def main() -> None:
         title="Crop-Type Connected Share",
     )
 
-    map_outputs = ["crop_origin_baseline_access_map.png", "crop_weekly_median_delta_minutes.png", "crop_weekly_connected_share.png"]
+    map_outputs = [
+        "crop_origin_baseline_access_map.png",
+        "crop_weekly_median_access_minutes.png",
+        *per_crop_median_outputs,
+        "crop_weekly_median_delta_minutes.png",
+        "crop_weekly_connected_share.png",
+    ]
     for scenario in sorted(weekly["scenario"].dropna().unique()):
         scen_rows = rows.loc[rows["scenario"].eq(scenario)].copy()
         max_values = (

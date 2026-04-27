@@ -20,7 +20,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from src.data.run_road_monthly_scenarios import _country_layers
-from src.data.run_weekly_accessibility_dijkstra import _build_edges, _compute_accessibility_dijkstra, _filter_small_components
+from src.data.run_weekly_accessibility_dijkstra import (
+    _build_edges,
+    _compute_accessibility_dijkstra,
+    _filter_points_strictly_inside_country,
+    _filter_small_components,
+)
 from src.data.run_weekly_accessibility_pandana import _project_root, _resolve_cities, _round_output_frame
 
 
@@ -109,6 +114,20 @@ def _select_baseline_connected_origins(
     candidates = gpd.read_file(candidate_gpkg)
     roads = gpd.read_file(overlay_gpkg)
     cities = gpd.read_file(_resolve_cities(project_root, iso3, city_threshold, None))
+    candidates, candidate_geometry_report = _filter_points_strictly_inside_country(
+        project_root=project_root,
+        iso3=iso3,
+        points=candidates,
+        label="candidate_origins",
+        output_dir=out_dir,
+    )
+    cities, city_geometry_report = _filter_points_strictly_inside_country(
+        project_root=project_root,
+        iso3=iso3,
+        points=cities,
+        label="candidate_cities",
+        output_dir=out_dir,
+    )
     target_crs = roads.estimate_utm_crs()
     if target_crs is None:
         raise RuntimeError("Unable to estimate projected CRS for road network.")
@@ -181,6 +200,9 @@ def _select_baseline_connected_origins(
         "n_selected": int(len(selected)),
         "n_crops": int(selected["crop_code"].nunique()),
         "component_filter": component_stats,
+        "geometry_validation": {
+            "checks": [candidate_geometry_report, city_geometry_report],
+        },
         "warnings": warnings,
     }
     (out_dir / "baseline_connected_origin_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -268,6 +290,24 @@ def main() -> None:
         )
     if not overlay_gpkg.exists():
         raise FileNotFoundError(f"Missing overlay after overlay stage: {overlay_gpkg}")
+
+    if not args.skip_plots and not args.skip_overlay:
+        _run_stage(
+            "overlay_factor_threshold_diagnostics",
+            [
+                python,
+                "-m",
+                "src.data.plot_weekly_factor_threshold_diagnostics",
+                "--results-dir",
+                str(overlay_gpkg.parent),
+                "--overlay-gpkg",
+                str(overlay_gpkg),
+                "--thresholds-yaml",
+                str(args.thresholds_yaml),
+            ],
+            project_root,
+            worker_manifest,
+        )
 
     candidates_dir = project_root / "outputs" / "road_weekly_scenarios" / iso3 / f"origins_spam_top{args.candidate_top_n}_by_crop_candidates"
     _run_stage(

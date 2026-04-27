@@ -69,6 +69,8 @@ def load_project_env(project_root: Path) -> None:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
+        if key.startswith("export "):
+            key = key.removeprefix("export ").strip()
         value = value.strip().strip("'").strip('"')
         if key and key not in os.environ:
             os.environ[key] = value

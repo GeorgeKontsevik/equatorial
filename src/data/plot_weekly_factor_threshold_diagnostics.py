@@ -55,6 +55,14 @@ THRESHOLD_STYLES = {
     "catastrophic_temporary": ("#b00020", "-"),
     "catastrophic_permanent": ("#5c0011", "-"),
 }
+THRESHOLD_LABELS = {
+    "none": "below threshold",
+    "speed_reduction_1": "10% speed loss",
+    "speed_reduction_2": "25% speed loss",
+    "speed_reduction_3": "40% speed loss",
+    "catastrophic_temporary": "temporary closure",
+    "catastrophic_permanent": "permanent closure",
+}
 TEMPERATURE_FACTOR_MARKERS = ("era5_t2m_", "era5_skt_")
 FACTOR_LABELS = {
     "flood_weekly": "Flood extent binary proxy",
@@ -115,6 +123,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--scenario", type=str, default="all", help="Scenario name, comma-separated names, or `all`.")
     parser.add_argument("--include-all-factors", action="store_true", help="Plot all numeric factor layers, not only threshold-configured factors.")
+    parser.add_argument(
+        "--keep-redundant-scenarios",
+        action="store_true",
+        help="Render scenario/surface combinations even when they select the same road mask.",
+    )
     return parser.parse_args()
 
 
@@ -145,6 +158,33 @@ def _load_summary(results_dir: Path) -> dict[str, object]:
 
 def _empty_thresholds() -> dict[str, float]:
     return {level: np.nan for level in THRESHOLD_LEVELS}
+
+
+def _threshold_level_label(level: str) -> str:
+    return THRESHOLD_LABELS.get(level, level.replace("_", " "))
+
+
+def _threshold_unit_for_factor(factor: str) -> str:
+    if factor == "visibility_weekly_min_m" or factor.endswith("_m"):
+        return "m"
+    if factor.endswith("_mm"):
+        return "mm"
+    if factor.endswith("_mm_per_h"):
+        return "mm/h"
+    if factor.endswith("_m_s"):
+        return "m/s"
+    if factor.endswith("_c") or _is_temperature_factor(factor):
+        return "C"
+    if "percentile" in factor:
+        return "percentile"
+    return ""
+
+
+def _threshold_legend_label(level: str, factor: str, direction: str, value: float) -> str:
+    op = ">=" if direction in {"gte", "gt"} else "<="
+    unit = _threshold_unit_for_factor(factor)
+    value_text = f"{value:g} {unit}".strip()
+    return f"{_threshold_level_label(level)}: {op} {value_text}"
 
 
 def _normalise_threshold_level(level: object) -> str:
@@ -281,6 +321,21 @@ def _scenario_names(value: str) -> list[str]:
     if unknown:
         raise ValueError(f"Unsupported scenario(s): {', '.join(unknown)}")
     return requested
+
+
+def _is_redundant_scenario(scenario: str, scenarios: list[str], surface_scope: str, keep_redundant: bool) -> bool:
+    if keep_redundant or set(scenarios) != {"actual_unpaved", "unknown_as_paved", "unknown_as_unpaved"}:
+        return False
+    normalized = str(surface_scope or "all").strip().lower().replace("-", "_")
+    if normalized in {"all", "any", "both", "*"}:
+        return scenario != "actual_unpaved"
+    if normalized in {"paved", "effective_paved"}:
+        return scenario == "unknown_as_unpaved"
+    if normalized in {"unpaved", "effective_unpaved"}:
+        return scenario == "unknown_as_paved"
+    if normalized.startswith("actual_"):
+        return scenario != "actual_unpaved"
+    return False
 
 
 def _week_token(week_start: str) -> str:
@@ -449,7 +504,13 @@ def _plot_factor(
         if not np.isfinite(value):
             continue
         color, linestyle = THRESHOLD_STYLES[level]
-        ax.axhline(value, color=color, linestyle=linestyle, linewidth=1.4, label=f"{level}: {value:g}")
+        ax.axhline(
+            value,
+            color=color,
+            linestyle=linestyle,
+            linewidth=1.4,
+            label=_threshold_legend_label(level, factor, direction, value),
+        )
 
     ax.set_title(f"{_pretty_scenario_name(scenario)} | {_pretty_factor_title(factor)}")
     ax.set_xlabel("Week start")
@@ -559,7 +620,7 @@ def _plot_factor_map(
             value = thresholds.get(level, np.nan)
             if np.isfinite(value):
                 handles.append(Line2D([0], [0], color="black", lw=1.6, linestyle=THRESHOLD_STYLES[level][1]))
-                labels.append(f"{level} {direction} {value:g}")
+                labels.append(_threshold_legend_label(level, factor, direction, value))
         if handles:
             ax.legend(handles, labels, loc="lower left", fontsize=8, frameon=True)
     fig.tight_layout()
@@ -594,7 +655,7 @@ def _plot_threshold_class_map(
         part = subset.loc[subset["_threshold_class"] == level]
         if not part.empty:
             part.plot(ax=ax, color=color, linewidth=0.55, alpha=0.95)
-    handles = [Line2D([0], [0], color=color, lw=2.5, label=level) for level, color in palette.items()]
+    handles = [Line2D([0], [0], color=color, lw=2.5, label=_threshold_level_label(level)) for level, color in palette.items()]
     ax.legend(handles=handles, loc="lower left", fontsize=8, frameon=True)
     ax.set_title(f"{_pretty_factor_title(factor)} | highest triggered threshold ({direction})")
     ax.set_axis_off()
@@ -660,6 +721,8 @@ def main() -> None:
             factor_thresholds = dict(cfg["thresholds"])
             factor_effects = dict(cfg.get("effects") or {})
             surface_scope = str(cfg.get("surface_scope", "all"))
+            if _is_redundant_scenario(scenario, scenarios, surface_scope, args.keep_redundant_scenarios):
+                continue
             effect_interpolation = str(cfg.get("effect_interpolation", "step"))
             values_by_week: dict[str, pd.Series] = {}
             mask = _effective_scope_mask(roads, scenario, surface_scope)

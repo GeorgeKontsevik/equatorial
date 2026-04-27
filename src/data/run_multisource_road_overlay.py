@@ -733,10 +733,17 @@ def main() -> None:
             layer_columns.append(col)
 
     if datasets_cfg.get("landslide_susceptibility", {}).get("enabled", True):
-        landslide_path = raw_root / "landslide_susceptibility" / "global" / f"nasa_landslide_susceptibility_{iso3.lower()}.tif"
+        landslide_cfg = dict(datasets_cfg.get("landslide_susceptibility", {}))
+        landslide_slug = str(
+            landslide_cfg.get("target_slug")
+            or config.get("study_area", {}).get("slug")
+            or iso3.lower()
+        )
+        landslide_path = raw_root / "landslide_susceptibility" / "global" / f"nasa_landslide_susceptibility_{landslide_slug}.tif"
         if not landslide_path.exists():
-            fallback = sorted((raw_root / "landslide_susceptibility" / "global").glob("*.tif"))
-            landslide_path = fallback[0] if fallback else None
+            landslide_path = raw_root / "landslide_susceptibility" / "global" / f"nasa_landslide_susceptibility_{iso3.lower()}.tif"
+        if not landslide_path.exists():
+            landslide_path = None
         roads["landslide_susceptibility"] = (
             _sample_raster_paths([landslide_path], probe_points, reducer="first_valid") if landslide_path else np.nan
         )

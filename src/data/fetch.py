@@ -39,6 +39,16 @@ def build_context(project_root: Path, config: dict) -> FetchContext:
     )
 
 
+def _project_root_from_config(config_path: Path) -> Path:
+    """Find the repository root for configs stored in nested generated dirs."""
+
+    resolved = config_path.resolve()
+    for parent in [resolved.parent, *resolved.parents]:
+        if (parent / "pyproject.toml").exists() and (parent / "src").exists():
+            return parent
+    return resolved.parents[1]
+
+
 def skipped_record(dataset_name: str, dataset_cfg: dict) -> CatalogRecord:
     return CatalogRecord(
         dataset_name=dataset_name,
@@ -58,7 +68,7 @@ def skipped_record(dataset_name: str, dataset_cfg: dict) -> CatalogRecord:
 
 def main() -> None:
     args = parse_args()
-    project_root = args.config.resolve().parents[1]
+    project_root = _project_root_from_config(args.config)
     load_project_env(project_root)
     config = load_config(args.config, country_code_override=args.country_code)
     context = build_context(project_root, config)

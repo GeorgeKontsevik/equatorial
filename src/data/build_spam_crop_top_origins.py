@@ -13,6 +13,8 @@ import pandas as pd
 import rasterio
 from rasterio.mask import mask
 from rasterio.transform import xy
+from scipy.ndimage import label as label_components
+from shapely.geometry import Point
 
 from src.data.render_country_previews import SPAM_CODES
 from src.data.run_road_monthly_scenarios import _country_layers
@@ -45,22 +47,99 @@ def _top_cells_for_crop(
         clipped, transform = mask(src, country_wgs84.geometry, crop=True, filled=True, nodata=0)
     arr = clipped[0].astype("float64")
     rows, cols = np.where(np.isfinite(arr) & (arr > 0))
-    if rows.size == 0:
+    if rows.size == 0 or top_n <= 0:
         return []
 
+    country_geom = country_wgs84.geometry.union_all()
     values = arr[rows, cols]
-    order = np.argsort(values)[::-1][:top_n]
+    component_records: list[dict[str, object]] = []
+    structure = np.ones((3, 3), dtype=np.uint8)
+    for quantile in (99.5, 99.0, 98.0, 97.0, 95.0, 90.0, 75.0, 0.0):
+        threshold = float(np.nanpercentile(values, quantile))
+        peak_mask = np.isfinite(arr) & (arr > 0) & (arr >= threshold)
+        labeled, n_components = label_components(peak_mask, structure=structure)
+        component_records = []
+        for component_id in range(1, n_components + 1):
+            comp_rows, comp_cols = np.where(labeled == component_id)
+            if comp_rows.size == 0:
+                continue
+            comp_values = arr[comp_rows, comp_cols]
+            peak_pos = int(np.nanargmax(comp_values))
+            row = int(comp_rows[peak_pos])
+            col = int(comp_cols[peak_pos])
+            lon, lat = xy(transform, row, col, offset="center")
+            point = Point(float(lon), float(lat))
+            if not point.within(country_geom):
+                continue
+            component_records.append(
+                {
+                    "row": row,
+                    "col": col,
+                    "lon": float(lon),
+                    "lat": float(lat),
+                    "harvested_area_index": float(comp_values[peak_pos]),
+                    "cluster_id": int(component_id),
+                    "cluster_n_cells": int(comp_rows.size),
+                    "cluster_harvested_area_index": float(np.nansum(comp_values)),
+                    "selection_method": f"peak_cluster_q{quantile:g}",
+                }
+            )
+        if len(component_records) >= top_n or quantile == 0.0:
+            break
+
+    component_records.sort(
+        key=lambda item: (
+            float(item["harvested_area_index"]),
+            float(item["cluster_harvested_area_index"]),
+            int(item["cluster_n_cells"]),
+        ),
+        reverse=True,
+    )
     records: list[dict[str, object]] = []
-    for rank, pos in enumerate(order, start=1):
-        row = int(rows[pos])
-        col = int(cols[pos])
-        lon, lat = xy(transform, row, col, offset="center")
+    used_cells: set[tuple[int, int]] = set()
+    for item in component_records[:top_n]:
+        used_cells.add((int(item["row"]), int(item["col"])))
         records.append(
             {
                 "crop_code": crop_code,
                 "crop_name": crop_name,
-                "crop_rank": rank,
-                "harvested_area_index": float(values[pos]),
+                "crop_rank": len(records) + 1,
+                "harvested_area_index": float(item["harvested_area_index"]),
+                "cluster_id": int(item["cluster_id"]),
+                "cluster_n_cells": int(item["cluster_n_cells"]),
+                "cluster_harvested_area_index": float(item["cluster_harvested_area_index"]),
+                "selection_method": str(item["selection_method"]),
+                "lon": float(item["lon"]),
+                "lat": float(item["lat"]),
+            }
+        )
+
+    if len(records) >= top_n:
+        return records
+
+    order = np.argsort(values)[::-1]
+    for pos in order:
+        if len(records) >= top_n:
+            break
+        row = int(rows[int(pos)])
+        col = int(cols[int(pos)])
+        if (row, col) in used_cells:
+            continue
+        lon, lat = xy(transform, row, col, offset="center")
+        point = Point(float(lon), float(lat))
+        if not point.within(country_geom):
+            continue
+        used_cells.add((row, col))
+        records.append(
+            {
+                "crop_code": crop_code,
+                "crop_name": crop_name,
+                "crop_rank": len(records) + 1,
+                "harvested_area_index": float(values[int(pos)]),
+                "cluster_id": None,
+                "cluster_n_cells": None,
+                "cluster_harvested_area_index": None,
+                "selection_method": "ranked_cell_fallback",
                 "lon": float(lon),
                 "lat": float(lat),
             }
@@ -78,7 +157,7 @@ def _plot_all(country: gpd.GeoDataFrame, origins: gpd.GeoDataFrame, out_path: Pa
         subset.plot(ax=ax, markersize=42, color=cmap(idx), edgecolor="white", linewidth=0.7, label=crop_code, zorder=3)
         for row in subset.itertuples():
             ax.text(row.geometry.x, row.geometry.y, f"{row.crop_code}{row.crop_rank}", fontsize=7, ha="left", va="bottom")
-    ax.set_title("SPAM Top-3 Harvested-Area Cells Per Crop")
+    ax.set_title("SPAM Spatial Peak-Cluster Origins Per Crop")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
     ax.legend(loc="lower left", ncol=2, fontsize=8)
@@ -101,7 +180,7 @@ def _plot_crop(country: gpd.GeoDataFrame, tif_path: Path, crop_origins: gpd.GeoD
     crop_origins.plot(ax=ax, color="#d73027", markersize=70, edgecolor="white", linewidth=0.9, zorder=4)
     for row in crop_origins.itertuples():
         ax.text(row.geometry.x, row.geometry.y, str(row.crop_rank), fontsize=9, weight="bold", ha="left", va="bottom")
-    ax.set_title(f"SPAM {crop_name}: Top-3 Harvested-Area Cells")
+    ax.set_title(f"SPAM {crop_name}: Spatial Peak-Cluster Origins")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
     fig.colorbar(image, ax=ax, shrink=0.72, label="Harvested-area index")
