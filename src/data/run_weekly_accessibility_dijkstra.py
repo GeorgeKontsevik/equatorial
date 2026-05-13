@@ -33,6 +33,7 @@ from src.data.run_weekly_accessibility_pandana import (
     _resolve_cities,
     _resolve_origins,
     _resolve_overlay_path,
+    _load_overlay_frame,
     _round_output_frame,
     _road_factor_values,
     _rule_effect,
@@ -171,7 +172,13 @@ def main() -> None:
     origins_path = _resolve_origins(project_root, iso3, args.n_origins, args.origins_seed, output_dir, args.origins_file)
 
     print(f"[dijkstra] reading overlay={overlay_path}", flush=True)
-    roads = gpd.read_file(overlay_path)
+    roads = _load_overlay_frame(
+        overlay_path,
+        week_starts=week_starts,
+        project_root=project_root,
+        iso3=iso3,
+        require_linear_geometry=True,
+    )
     cities = gpd.read_file(cities_path)
     origins = gpd.read_file(origins_path)
     if roads.empty or cities.empty or origins.empty:

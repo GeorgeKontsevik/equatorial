@@ -63,52 +63,6 @@ road_hazard_thresholds:
       catastrophic_temporary:
         speed_penalty_fraction: null
         closure_weeks: 1
-  - hazard: wind_crosswind
-    surface: paved
-    source_row: 'Mapping_Rebuilt: wind_crosswind/paved'
-    factor: era5_crosswind_10m_weekly_max_m_s
-    direction: gte
-    surface_scope: paved
-    current_status: active_operational_restriction_only_no_treefall_closure
-    thresholds:
-      speed_reduction_1: 20.0
-      speed_reduction_2: 30.0
-      speed_reduction_3: 35.0
-      catastrophic_temporary: null
-      catastrophic_permanent: null
-    effects:
-      speed_reduction_1:
-        speed_penalty_fraction: 0.1
-        closure_weeks: null
-      speed_reduction_2:
-        speed_penalty_fraction: 0.25
-        closure_weeks: null
-      speed_reduction_3:
-        speed_penalty_fraction: 0.4
-        closure_weeks: null
-  - hazard: wind_crosswind
-    surface: unpaved
-    source_row: 'Mapping_Rebuilt: wind_crosswind/unpaved'
-    factor: era5_crosswind_10m_weekly_max_m_s
-    direction: gte
-    surface_scope: unpaved
-    current_status: active_operational_restriction_only_dust_handled_elsewhere
-    thresholds:
-      speed_reduction_1: 20.0
-      speed_reduction_2: 30.0
-      speed_reduction_3: 35.0
-      catastrophic_temporary: null
-      catastrophic_permanent: null
-    effects:
-      speed_reduction_1:
-        speed_penalty_fraction: 0.1
-        closure_weeks: null
-      speed_reduction_2:
-        speed_penalty_fraction: 0.25
-        closure_weeks: null
-      speed_reduction_3:
-        speed_penalty_fraction: 0.4
-        closure_weeks: null
   - hazard: dust_visibility
     surface: paved
     source_row: 'Mapping_Rebuilt: dust_visibility/paved'

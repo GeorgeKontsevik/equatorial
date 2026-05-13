@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pandas as pd
+import pycountry
 
 from src.data.catalog import CatalogRecord
 from src.data.utils import downloaded_record, ensure_directory, manual_record, validate_download
@@ -54,7 +55,15 @@ def _load_history(path: Path) -> pd.DataFrame:
     return frame
 
 
-def _select_stations(history: pd.DataFrame, bbox: list[float], start: datetime, end: datetime, max_stations: int) -> pd.DataFrame:
+def _select_stations(
+    history: pd.DataFrame,
+    bbox: list[float],
+    start: datetime,
+    end: datetime,
+    max_stations: int,
+    *,
+    country_code: str = "",
+) -> pd.DataFrame:
     minx, miny, maxx, maxy = [float(value) for value in bbox]
     start_num = int(start.strftime("%Y%m%d"))
     end_num = int(end.strftime("%Y%m%d"))
@@ -64,6 +73,16 @@ def _select_stations(history: pd.DataFrame, bbox: list[float], start: datetime, 
         & (history["begin_num"] <= end_num)
         & (history["end_num"] >= start_num)
     ].copy()
+    iso2 = ""
+    iso3 = str(country_code).strip().upper()
+    if iso3:
+        country = pycountry.countries.get(alpha_3=iso3)
+        if country is not None:
+            iso2 = str(country.alpha_2).upper()
+    if iso2 and "CTRY" in subset.columns:
+        country_subset = subset.loc[subset["CTRY"].astype("string").str.upper() == iso2].copy()
+        if not country_subset.empty:
+            subset = country_subset
     subset["station_id"] = subset.apply(_station_id, axis=1)
     subset = subset.drop_duplicates("station_id").sort_values(["station_id"]).head(max_stations)
     return subset
@@ -110,7 +129,7 @@ def fetch(dataset_cfg: dict, context) -> list[CatalogRecord]:
     if not history_path.exists():
         _download_text(history_url, history_path, context)
     history = _load_history(history_path)
-    stations = _select_stations(history, bbox, start, end, max_stations)
+    stations = _select_stations(history, bbox, start, end, max_stations, country_code=country_code)
     station_path = target_root / "stations.csv"
     stations.to_csv(station_path, index=False)
 

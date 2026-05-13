@@ -1,4 +1,9 @@
-"""Run weekly road accessibility scenarios with pandana on a continuously updated graph."""
+"""Legacy Pandana weekly accessibility runner.
+
+The current active execution path uses `run_weekly_accessibility_dijkstra.py`.
+This module still hosts shared helper functions that are imported by the active
+pipeline, so it remains in place even though the Pandana CLI path is legacy.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from shapely.geometry import LineString, MultiLineString
+from src.data.road_input_utils import country_layer, load_roads
 
 
 FACTOR_PREFIXES = (
@@ -200,9 +206,69 @@ def _resolve_overlay_path(project_root: Path, iso3: str, step_days: int, provide
     if provided is not None:
         return provided
     candidates = sorted((project_root / "outputs" / "road_multisource_overlay" / iso3).glob(f"*_{step_days}d/roads_with_multisource_overlay.gpkg"))
-    if not candidates:
-        raise FileNotFoundError("No overlay GPKG found. Run run_multisource_road_overlay.py first.")
-    return candidates[-1]
+    if candidates:
+        return candidates[-1]
+    parquet_candidates = sorted((project_root / "outputs" / "road_multisource_overlay" / iso3).glob(f"*_{step_days}d/roads_static.parquet"))
+    if parquet_candidates:
+        return parquet_candidates[-1]
+    raise FileNotFoundError("No overlay found (neither GPKG nor parquet static). Run run_multisource_road_overlay.py first.")
+
+
+def _load_overlay_frame(
+    overlay_path: Path,
+    week_starts: list[date] | None = None,
+    *,
+    project_root: Path | None = None,
+    iso3: str | None = None,
+    require_linear_geometry: bool = False,
+) -> gpd.GeoDataFrame:
+    overlay_path = Path(overlay_path)
+    if overlay_path.is_dir():
+        static_path = overlay_path / "roads_static.parquet"
+        weekly_dir = overlay_path / "weekly"
+    elif overlay_path.suffix.lower() == ".parquet":
+        static_path = overlay_path
+        weekly_dir = overlay_path.parent / "weekly"
+    else:
+        return gpd.read_file(overlay_path)
+
+    if not static_path.exists():
+        raise FileNotFoundError(f"Missing static parquet overlay: {static_path}")
+    roads = gpd.read_parquet(static_path)
+    if not isinstance(roads, gpd.GeoDataFrame):
+        roads = gpd.GeoDataFrame(roads, geometry="geometry", crs="EPSG:4326")
+    if not weekly_dir.exists():
+        return roads
+
+    if week_starts:
+        wanted = {f"week_{_week_token(week)}.parquet" for week in week_starts}
+        weekly_files = sorted(path for path in weekly_dir.glob("week_*.parquet") if path.name in wanted)
+    else:
+        weekly_files = sorted(weekly_dir.glob("week_*.parquet"))
+
+    for weekly_path in weekly_files:
+        week_df = pd.read_parquet(weekly_path)
+        weekly_cols = [col for col in week_df.columns if col != "road_row_id"]
+        if not weekly_cols:
+            continue
+        roads = roads.merge(week_df, on="road_row_id", how="left")
+    if require_linear_geometry:
+        geom_types = roads.geometry.geom_type.dropna().unique().tolist() if "geometry" in roads.columns else []
+        is_linear = all(geom in {"LineString", "MultiLineString"} for geom in geom_types)
+        if not is_linear:
+            if project_root is None or iso3 is None:
+                raise ValueError("require_linear_geometry=True requires project_root and iso3.")
+            country = country_layer(project_root, iso3)
+            line_roads = load_roads(project_root, iso3, country, geometry_mode="line")
+            factor_cols = [col for col in roads.columns if col not in {"geometry"}]
+            roads_factors = pd.DataFrame(roads.drop(columns="geometry"))[factor_cols]
+            line_roads = line_roads.merge(roads_factors, on="road_row_id", how="left", suffixes=("", "_overlay"))
+            overlay_surface = "surface_group_overlay"
+            if overlay_surface in line_roads.columns:
+                line_roads["surface_group"] = line_roads[overlay_surface].fillna(line_roads["surface_group"])
+                line_roads = line_roads.drop(columns=[overlay_surface])
+            roads = line_roads
+    return roads
 
 
 def _resolve_cities(project_root: Path, iso3: str, threshold: int, provided: Path | None) -> Path:

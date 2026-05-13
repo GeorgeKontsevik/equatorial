@@ -191,7 +191,7 @@ datasets:
       format: netcdf
 
   visibility_noaa_isd:
-    enabled: false
+    enabled: true
     source_url: https://www.ncei.noaa.gov/data/global-hourly/access
     history_url: https://www.ncei.noaa.gov/pub/data/noaa/isd-history.csv
     start_date: "2024-07-01"

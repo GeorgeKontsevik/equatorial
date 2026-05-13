@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from src.data.run_road_monthly_scenarios import _country_layers
-from src.data.run_weekly_accessibility_pandana import _round_output_frame
+from src.data.run_weekly_accessibility_pandana import _round_output_frame, _load_overlay_frame
 
 
 def parse_args() -> argparse.Namespace:
@@ -271,7 +271,7 @@ def main() -> None:
     if args.overlay_gpkg is not None:
         overlay_path = _resolve(args.overlay_gpkg, project_root)
         if overlay_path.exists():
-            roads = gpd.read_file(overlay_path)
+            roads = _load_overlay_frame(overlay_path)
 
     base_values = origins[["origin_id"]].merge(
         baseline[["origin_id", "access_minutes"]].rename(columns={"access_minutes": "baseline_access_minutes"}),
