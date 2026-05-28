@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import gc
+import ast
 import json
+import math
 import re
+import shutil
 import tempfile
+import time
 import zipfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -14,11 +18,13 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyogrio
 import rasterio
 import xarray as xr
 import yaml
+from rasterio.warp import transform_bounds
 from rasterio.windows import Window
-from shapely.geometry import LineString, MultiLineString
+from shapely.geometry import LineString, MultiLineString, box
 from src.data.config import load_config
 from src.data.road_input_utils import country_layer, geometry_probe_point, load_roads
 
@@ -41,13 +47,42 @@ def parse_args() -> argparse.Namespace:
         help="Use `probe_point` for heavy annual runs when boxplots matter more than full road line output.",
     )
     parser.add_argument("--max-workers", type=int, default=4, help="Parallel workers for independent weekly computations.")
+    parser.add_argument("--road-backend", choices=("parquet", "gpkg", "postgis"), default="parquet", help="Road source backend.")
+    parser.add_argument("--postgis-dsn", type=str, default="", help="SQLAlchemy DSN for PostGIS, e.g. postgresql+psycopg://user:pass@host:5432/db")
+    parser.add_argument("--postgis-table", type=str, default="", help="PostGIS table name for roads, default road_surface_<iso3>.")
     parser.add_argument("--point-batch-size", type=int, default=250_000, help="Batch size for large point sampling arrays.")
+    parser.add_argument("--road-chunk-size", type=int, default=50_000, help="Number of road features to process per overlay chunk.")
+    parser.add_argument("--max-road-chunks", type=int, default=None, help="Optional debug limit for road chunks.")
+    parser.add_argument("--multiscale-road-merge", action="store_true", help="Sample source layers on per-source cell/surface representatives, then map values back to road rows.")
+    parser.add_argument("--era5-cell-m", type=float, default=11000.0)
+    parser.add_argument("--chirps-cell-m", type=float, default=5500.0)
+    parser.add_argument("--flood-cell-m", type=float, default=20.0)
+    parser.add_argument("--visibility-cell-m", type=float, default=50000.0)
+    parser.add_argument("--skip-era5-daily-sum-max", action="store_true", help="Skip expensive ERA5 daily precipitation max derived metric.")
+    parser.add_argument(
+        "--era5-precip-only",
+        action="store_true",
+        help="Restrict ERA5 overlay to precipitation-only metrics and skip wind/temperature/soil/gust/rate fields.",
+    )
+    parser.add_argument(
+        "--compact-weekly-logs",
+        action="store_true",
+        help="Print compact weekly country progress only (minimal per-factor logs).",
+    )
     parser.add_argument("--output-root", type=Path, default=None, help="Custom output directory root for this run.")
     return parser.parse_args()
 
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _relpath(path: Path, project_root: Path) -> str:
+    path = path.resolve()
+    try:
+        return str(path.relative_to(project_root.resolve()))
+    except ValueError:
+        return str(path)
 
 
 def _sample_raster_paths(
@@ -174,6 +209,39 @@ def _read_unique_raster_cells(src: rasterio.io.DatasetReader, unique_cells: np.n
         start = end
 
     return values
+
+
+def _multiscale_group_index(
+    roads: gpd.GeoDataFrame,
+    probe_points_wgs84: gpd.GeoSeries,
+    *,
+    cell_m: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    if cell_m <= 0 or roads.empty:
+        return None
+    try:
+        projected_crs = roads.estimate_utm_crs() or "EPSG:3857"
+        points = probe_points_wgs84.to_crs(projected_crs)
+    except Exception:
+        points = probe_points_wgs84.to_crs("EPSG:3857")
+    xs = np.asarray([geom.x if geom and not geom.is_empty else np.nan for geom in points], dtype="float64")
+    ys = np.asarray([geom.y if geom and not geom.is_empty else np.nan for geom in points], dtype="float64")
+    ix = np.floor(xs / float(cell_m)).astype("float64")
+    iy = np.floor(ys / float(cell_m)).astype("float64")
+    surface = roads.get("surface_group", pd.Series("unknown", index=roads.index)).astype("string").fillna("unknown")
+    keys = pd.Series(ix).astype("Int64").astype(str) + ":" + pd.Series(iy).astype("Int64").astype(str) + ":" + surface.reset_index(drop=True).astype(str)
+    codes, _ = pd.factorize(keys, sort=False)
+    representatives = pd.Series(np.arange(len(codes))).groupby(codes, sort=False).first().to_numpy(dtype=int)
+    return representatives, codes.astype(int)
+
+
+def _expand_multiscale_values(values: np.ndarray, groups: tuple[np.ndarray, np.ndarray] | None, n_rows: int) -> np.ndarray:
+    if groups is None:
+        return values
+    representatives, inverse = groups
+    if len(representatives) == n_rows:
+        return values
+    return np.asarray(values)[inverse]
 
 
 def _road_unit_vectors(roads: gpd.GeoDataFrame) -> tuple[np.ndarray, np.ndarray]:
@@ -528,19 +596,54 @@ def _sample_era5_gust_speed(
 def _open_era5_dataset(paths: list[Path]) -> xr.Dataset:
     if not paths:
         raise FileNotFoundError("No ERA5 files were provided for overlay.")
-    datasets = [xr.open_dataset(path) for path in paths]
+    datasets = [_normalize_era5_dataset(xr.open_dataset(path)) for path in paths]
     if len(datasets) == 1:
         return datasets[0]
     try:
-        time_dim = next((name for name in ["valid_time", "time"] if name in datasets[0].dims), None)
+        time_dim = next((name for name in ["time", "valid_time"] if name in datasets[0].dims), None)
         if time_dim is None:
-            return xr.combine_by_coords(datasets)
-        combined = xr.concat(datasets, dim=time_dim)
+            return xr.combine_by_coords(datasets, coords="minimal", compat="override")
+        combined = xr.concat(datasets, dim=time_dim, coords="minimal", compat="override")
         return combined.sortby(time_dim)
     except Exception:
         for ds in datasets:
             ds.close()
         raise
+
+
+def _normalize_era5_dataset(ds: xr.Dataset) -> xr.Dataset:
+    if "valid_time" in ds.dims and "time" not in ds.dims:
+        ds = ds.rename({"valid_time": "time"})
+    elif "valid_time" in ds.coords and "time" not in ds.coords:
+        ds = ds.rename({"valid_time": "time"})
+    drop_names = [
+        name
+        for name in ("expver", "depthBelowLandLayer", "number", "step", "surface")
+        if name in ds.coords and name not in ds.dims
+    ]
+    if drop_names:
+        ds = ds.drop_vars(drop_names, errors="ignore")
+    return ds
+
+
+def _era5_paths_for_window(paths: list[Path], start_date: date, end_date: date) -> list[Path]:
+    if len(paths) <= 1:
+        return paths
+    selected: list[Path] = []
+    for path in paths:
+        match = re.search(r"-(\d{4})-(\d{2})\.nc$", path.name)
+        if match is None:
+            return paths
+        year = int(match.group(1))
+        month = int(match.group(2))
+        month_start = date(year, month, 1)
+        if month == 12:
+            month_end = date(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            month_end = date(year, month + 1, 1) - timedelta(days=1)
+        if month_start <= end_date and month_end >= start_date:
+            selected.append(path)
+    return selected or paths
 
 
 def _iter_days(start: date, end: date) -> list[date]:
@@ -585,12 +688,13 @@ def _era5_paths_from_config(
         return paths
 
     split_request_by = str(era5_cfg.get("split_request_by", "")).strip().lower()
-    if split_request_by == "weekly":
+    if split_request_by in {"daily", "weekly"}:
         request = dict(era5_cfg.get("request") or {})
         if not request:
-            raise ValueError("ERA5 weekly overlay requires datasets.era5.request in the config.")
+            raise ValueError(f"ERA5 {split_request_by} overlay requires datasets.era5.request in the config.")
         target_prefix = str(era5_cfg.get("target_prefix", "era5")).strip() or "era5"
-        step_days = int(era5_cfg.get("request_step_days", era5_cfg.get("step_days", 7)))
+        default_step_days = 1 if split_request_by == "daily" else 7
+        step_days = int(era5_cfg.get("request_step_days", era5_cfg.get("step_days", default_step_days)))
         source_start = _analysis_date(era5_cfg.get("start_date"), analysis_start.isoformat())
         source_end = _analysis_date(era5_cfg.get("end_date"), analysis_end.isoformat())
         window_start = max(analysis_start, source_start)
@@ -665,12 +769,59 @@ def _flood_paths_by_week_start(
     raw_root: Path,
     week_starts: list[date],
     *,
+    bbox: tuple[float, float, float, float] | None = None,
     progress_label: str | None = None,
 ) -> dict[date, list[Path]]:
     flood_paths = sorted((raw_root / "flood" / "copernicus_gfm" / "GFM").glob("2024/*/*.tif"))
     by_week: dict[date, list[Path]] = {week_start: [] for week_start in week_starts}
     if not flood_paths:
         return by_week
+    raster_has_positive_cache: dict[Path, bool] = {}
+
+    def _raster_intersects_bbox(path: Path, query_bbox: tuple[float, float, float, float]) -> bool:
+        try:
+            with rasterio.open(path) as src:
+                bounds = src.bounds
+                if src.crs is not None and str(src.crs).upper() not in {"EPSG:4326", "OGC:CRS84"}:
+                    minx, miny, maxx, maxy = transform_bounds(src.crs, "EPSG:4326", *bounds, densify_pts=21)
+                else:
+                    minx, miny, maxx, maxy = bounds.left, bounds.bottom, bounds.right, bounds.top
+        except Exception:
+            return False
+        qminx, qminy, qmaxx, qmaxy = query_bbox
+        return max(float(minx), qminx) <= min(float(maxx), qmaxx) and max(float(miny), qminy) <= min(float(maxy), qmaxy)
+
+    def _raster_has_positive_data_in_bbox(path: Path, query_bbox: tuple[float, float, float, float]) -> bool:
+        cached = raster_has_positive_cache.get(path)
+        if cached is not None:
+            return cached
+        try:
+            with rasterio.open(path) as src:
+                if src.crs is not None and str(src.crs).upper() not in {"EPSG:4326", "OGC:CRS84"}:
+                    minx, miny, maxx, maxy = transform_bounds("EPSG:4326", src.crs, *query_bbox, densify_pts=21)
+                else:
+                    minx, miny, maxx, maxy = query_bbox
+                window = rasterio.windows.from_bounds(minx, miny, maxx, maxy, transform=src.transform)
+                full = Window(col_off=0, row_off=0, width=src.width, height=src.height)
+                try:
+                    window = window.intersection(full).round_offsets().round_lengths()
+                except Exception:
+                    raster_has_positive_cache[path] = False
+                    return False
+                if window.width <= 0 or window.height <= 0:
+                    raster_has_positive_cache[path] = False
+                    return False
+                arr = src.read(1, window=window, masked=True)
+        except Exception:
+            raster_has_positive_cache[path] = False
+            return False
+        if np.ma.isMaskedArray(arr):
+            has_positive = bool(np.any(arr.compressed() > 0))
+        else:
+            with np.errstate(invalid="ignore"):
+                has_positive = bool(np.any(np.asarray(arr) > 0))
+        raster_has_positive_cache[path] = has_positive
+        return has_positive
 
     def _assign_by_filename_timestamp() -> dict[date, list[Path]]:
         fallback: dict[date, list[Path]] = {week_start: [] for week_start in week_starts}
@@ -700,12 +851,31 @@ def _flood_paths_by_week_start(
 
     flood_path_set = set(flood_paths)
     flood_rows = catalog.loc[catalog["dataset_name"].astype("string") == "flood"].copy()
+    if bbox is not None and "bbox_if_known" in flood_rows.columns:
+        query_bbox = tuple(float(x) for x in bbox)
+
+        def _intersects(raw: object) -> bool:
+            try:
+                values = ast.literal_eval(str(raw))
+                if not isinstance(values, list) or len(values) != 4:
+                    return False
+                minx, miny, maxx, maxy = (float(x) for x in values)
+            except Exception:
+                return False
+            qminx, qminy, qmaxx, qmaxy = query_bbox
+            return max(minx, qminx) <= min(maxx, qmaxx) and max(miny, qminy) <= min(maxy, qmaxy)
+
+        flood_rows = flood_rows.loc[flood_rows["bbox_if_known"].map(_intersects)].copy()
     row_iterator = flood_rows.itertuples(index=False)
     if progress_label and len(flood_rows) > 1:
         row_iterator = tqdm(list(row_iterator), desc=f"{progress_label} catalog", unit="row", leave=False)
     for row in row_iterator:
         local_path = project_root / str(row.local_path)
         if local_path not in flood_path_set:
+            continue
+        if bbox is not None and not _raster_intersects_bbox(local_path, tuple(float(x) for x in bbox)):
+            continue
+        if bbox is not None and not _raster_has_positive_data_in_bbox(local_path, tuple(float(x) for x in bbox)):
             continue
         match = re.search(r"weekly window (\d{4}-\d{2}-\d{2})\.\.", str(row.notes))
         if match is None:
@@ -714,7 +884,7 @@ def _flood_paths_by_week_start(
         if week_start in by_week:
             by_week[week_start].append(local_path)
 
-    if any(by_week.values()):
+    if any(by_week.values()) or bbox is not None:
         return by_week
     return _assign_by_filename_timestamp()
 
@@ -849,6 +1019,22 @@ def _add_flopros(roads: gpd.GeoDataFrame, probe_points_wgs84: gpd.GeoSeries, raw
     return roads, ["flopros_merl_riv", "flopros_dl_max_riv"]
 
 
+def _overlay_bbox(config: dict[str, object]) -> tuple[float, float, float, float] | None:
+    datasets = config.get("datasets", {}) if isinstance(config, dict) else {}
+    for key in ("gadm", "era5", "chirps"):
+        raw = datasets.get(key, {}).get("bbox") if isinstance(datasets.get(key), dict) else None
+        if isinstance(raw, list) and len(raw) == 4:
+            return tuple(float(value) for value in raw)
+    return None
+
+
+def _country_or_bbox_geometry(project_root: Path, iso3: str, config: dict[str, object]) -> gpd.GeoDataFrame:
+    bbox = _overlay_bbox(config)
+    if bbox is None:
+        return country_layer(project_root, iso3)
+    return gpd.GeoDataFrame({"country_code": [iso3]}, geometry=[box(*bbox)], crs="EPSG:4326")
+
+
 def main() -> None:
     args = parse_args()
     project_root = _project_root()
@@ -867,107 +1053,34 @@ def main() -> None:
 
     raw_root = project_root / "data" / "raw"
     datasets_cfg = dict(config.get("datasets", {}))
-    print(f"Loading country boundary for {iso3}...")
-    country = country_layer(project_root, iso3)
-    print(f"Loading roads for {iso3}...")
-    roads = load_roads(project_root, iso3, country, geometry_mode=args.road_geometry_mode)
-    print(f"Prepared {len(roads):,} roads for overlay.")
-    if args.road_geometry_mode == "probe_point":
-        roads["probe_point"] = roads.geometry
-    else:
-        roads["probe_point"] = roads.geometry.apply(geometry_probe_point)
-    probe_points = gpd.GeoSeries(roads["probe_point"], crs="EPSG:4326")
-    lons = np.asarray([pt.x for pt in probe_points], dtype="float64")
-    lats = np.asarray([pt.y for pt in probe_points], dtype="float64")
-    if args.road_geometry_mode == "probe_point":
-        road_ux = np.zeros(len(roads), dtype="float64")
-        road_uy = np.ones(len(roads), dtype="float64")
-        print("Using probe-point mode; crosswind-aligned road orientation metrics will be skipped.")
-    else:
-        road_ux, road_uy = _road_unit_vectors(roads)
-
-    layer_columns_static: list[str] = []
-    layer_columns_weekly: list[str] = []
-    max_workers = max(1, int(args.max_workers))
+    print(f"Loading country boundary for {iso3}...", flush=True)
+    country = _country_or_bbox_geometry(project_root, iso3, config)
+    if _overlay_bbox(config) is not None:
+        print(f"Using overlay bbox: {list(country.total_bounds)}", flush=True)
+    road_path = raw_root / "road_surface" / iso3 / f"heigit_{iso3.lower()}_roadsurface_lines.gpkg"
+    total_features = len(pyogrio.read_dataframe(road_path, bbox=tuple(country.total_bounds), columns=[]))
     point_batch_size = max(1, int(args.point_batch_size))
-
-    if datasets_cfg.get("landslide_susceptibility", {}).get("enabled", True):
-        landslide_cfg = dict(datasets_cfg.get("landslide_susceptibility", {}))
-        landslide_slug = str(
-            landslide_cfg.get("target_slug")
-            or config.get("study_area", {}).get("slug")
-            or iso3.lower()
+    road_chunk_size = max(1, int(args.road_chunk_size))
+    n_chunks = max(1, math.ceil(total_features / road_chunk_size))
+    if args.max_road_chunks is not None:
+        n_chunks = min(n_chunks, max(0, int(args.max_road_chunks)))
+    print(f"Road layer: {road_path.name} | Features: {total_features:,}", flush=True)
+    print(f"Road chunk size: {road_chunk_size:,} | Road chunks: {n_chunks:,}", flush=True)
+    if args.road_geometry_mode == "probe_point":
+        print("Using probe-point mode; crosswind-aligned road orientation metrics will be skipped.", flush=True)
+    source_cell_m = {
+        "era5": float(args.era5_cell_m),
+        "chirps": float(args.chirps_cell_m),
+        "flood": float(args.flood_cell_m),
+        "flood_depth": float(args.flood_cell_m),
+        "visibility": float(args.visibility_cell_m),
+    }
+    if args.multiscale_road_merge:
+        print(
+            "[overlay] multiscale road merge enabled "
+            + " ".join(f"{key}={value:g}m" for key, value in source_cell_m.items() if key != "flood_depth"),
+            flush=True,
         )
-        landslide_path = raw_root / "landslide_susceptibility" / "global" / f"nasa_landslide_susceptibility_{landslide_slug}.tif"
-        if not landslide_path.exists():
-            landslide_path = raw_root / "landslide_susceptibility" / "global" / f"nasa_landslide_susceptibility_{iso3.lower()}.tif"
-        if not landslide_path.exists():
-            landslide_path = None
-        roads["landslide_susceptibility"] = (
-            _sample_raster_paths([landslide_path], probe_points, reducer="first_valid", progress_label="Landslide raster")
-            if landslide_path
-            else np.nan
-        )
-        layer_columns_static.append("landslide_susceptibility")
-
-    if datasets_cfg.get("gem", {}).get("enabled", True):
-        gem_path = raw_root / "gem" / "global" / "v2023_1_pga_475_rock_3min.tif"
-        roads["gem_pga_475y"] = (
-            _sample_raster_paths([gem_path], probe_points, reducer="first_valid", progress_label="GEM raster")
-            if gem_path.exists()
-            else np.nan
-        )
-        layer_columns_static.append("gem_pga_475y")
-
-    if datasets_cfg.get("liquefaction", {}).get("enabled", True):
-        liquefaction_path = raw_root / "liquefaction" / "global" / "liquefaction_v1_deg.tif"
-        roads["liquefaction_class"] = (
-            _sample_raster_paths(
-                [liquefaction_path], probe_points, reducer="first_valid", progress_label="Liquefaction raster"
-            )
-            if liquefaction_path.exists()
-            else np.nan
-        )
-        layer_columns_static.append("liquefaction_class")
-
-    if datasets_cfg.get("worldcover", {}).get("enabled", True):
-        worldcover_paths = sorted((raw_root / "worldcover").glob("**/*_Map.tif"))
-        roads["worldcover_class"] = (
-            _sample_raster_paths(
-                worldcover_paths,
-                probe_points,
-                reducer="first_valid",
-                positive_only=True,
-                progress_label="WorldCover rasters",
-            )
-            if worldcover_paths
-            else np.nan
-        )
-        layer_columns_static.append("worldcover_class")
-
-    if datasets_cfg.get("soilgrids", {}).get("enabled", True):
-        for soil_path in tqdm(sorted((raw_root / "soilgrids").glob("*.tif")), desc="SoilGrids rasters", unit="raster"):
-            col = f"soil_{soil_path.stem}"
-            roads[col] = _sample_raster_paths(
-                [soil_path], probe_points, reducer="first_valid", progress_label=f"Soil raster {soil_path.name}"
-            )
-            layer_columns_static.append(col)
-
-    if datasets_cfg.get("era5_spi", {}).get("enabled", True):
-        for spi_path in tqdm(
-            sorted((raw_root / "era5_spi" / "global" / "monthly").glob("GLOBAL-ERA5_LAND_DAILY-spi-*.tif")),
-            desc="ERA5 SPI rasters",
-            unit="raster",
-        ):
-            col = f"era5_spi_{spi_path.stem.split('-spi-')[-1]}"
-            roads[col] = _sample_raster_paths(
-                [spi_path], probe_points, reducer="first_valid", progress_label=f"ERA5 SPI raster {spi_path.name}"
-            )
-            layer_columns_static.append(col)
-
-    if datasets_cfg.get("flopros", {}).get("enabled", True):
-        roads, flopros_cols = _add_flopros(roads, probe_points, raw_root)
-        layer_columns_static.extend(flopros_cols)
 
     out_dir = (
         args.output_root
@@ -976,13 +1089,18 @@ def main() -> None:
     )
     if not out_dir.is_absolute():
         out_dir = project_root / out_dir
+    static_dir = out_dir / "static"
     weekly_dir = out_dir / "weekly"
     out_dir.mkdir(parents=True, exist_ok=True)
+    if static_dir.exists():
+        shutil.rmtree(static_dir)
+    if weekly_dir.exists():
+        shutil.rmtree(weekly_dir)
+    legacy_static = out_dir / "roads_static.parquet"
+    if legacy_static.exists():
+        legacy_static.unlink()
+    static_dir.mkdir(parents=True, exist_ok=True)
     weekly_dir.mkdir(parents=True, exist_ok=True)
-
-    static_cols = ["road_row_id", "surface_group", "geometry", *layer_columns_static]
-    roads_static = roads[static_cols].copy()
-    roads_static.to_parquet(out_dir / "roads_static.parquet", index=False)
 
     chirps_cfg = dict(datasets_cfg.get("chirps", {}))
     chirps_enabled = chirps_cfg.get("enabled", True)
@@ -992,8 +1110,10 @@ def main() -> None:
             raise RuntimeError(f"Weekly overlay requires daily CHIRPS inputs, got `{chirps_frequency}`.")
     chirps_version = str(chirps_cfg.get("version", "v3.0"))
     daily_variant = str(chirps_cfg.get("daily_variant", "sat")).strip().lower()
-    flood_by_week = _flood_paths_by_week_start(project_root, raw_root, week_starts)
-    flood_depth_by_week = _flood_depth_paths_by_week_start(raw_root, iso3, week_starts)
+    flood_enabled = datasets_cfg.get("flood", {}).get("enabled", True)
+    flood_depth_enabled = datasets_cfg.get("flood_depth", {}).get("enabled", True)
+    flood_by_week = _flood_paths_by_week_start(project_root, raw_root, week_starts, bbox=tuple(country.total_bounds)) if flood_enabled else {}
+    flood_depth_by_week = _flood_depth_paths_by_week_start(raw_root, iso3, week_starts) if flood_depth_enabled else {}
     vis_enabled = datasets_cfg.get("visibility_noaa_isd", {}).get("enabled", True)
 
     era5_cfg = dict(datasets_cfg.get("era5", {}))
@@ -1010,76 +1130,198 @@ def main() -> None:
     if cams_enabled and (cams_zip is None or not cams_zip.exists()):
         raise FileNotFoundError(f"Missing CAMS weekly-capable source file: {cams_zip}")
 
-    def _compute_week(week_start: date) -> tuple[date, pd.DataFrame]:
+    layer_columns_static_set: set[str] = set()
+    layer_columns_weekly_set: set[str] = set()
+    static_stats_rows: list[dict[str, object]] = []
+    weekly_nan_rows: list[dict[str, object]] = []
+    multiscale_sampling_rows: list[dict[str, object]] = []
+    next_road_row_id = 0
+    era5_dataset_cache: dict[tuple[str, ...], xr.Dataset] = {}
+
+    def _cached_era5_dataset(paths: list[Path]) -> xr.Dataset:
+        key = tuple(str(path) for path in paths)
+        ds = era5_dataset_cache.get(key)
+        if ds is None:
+            ds = _open_era5_dataset(paths)
+            era5_dataset_cache[key] = ds
+        return ds
+
+    def _compute_static_chunk(
+        roads_chunk: gpd.GeoDataFrame,
+        probe_points: gpd.GeoSeries,
+        *,
+        chunk_label: str,
+    ) -> tuple[gpd.GeoDataFrame, list[str]]:
+        layer_columns_static: list[str] = []
+        if datasets_cfg.get("landslide_susceptibility", {}).get("enabled", True):
+            print(f"[overlay] {chunk_label} static landslide start", flush=True)
+            landslide_cfg = dict(datasets_cfg.get("landslide_susceptibility", {}))
+            landslide_slug = str(
+                landslide_cfg.get("target_slug")
+                or config.get("study_area", {}).get("slug")
+                or iso3.lower()
+            )
+            landslide_path = raw_root / "landslide_susceptibility" / "global" / f"nasa_landslide_susceptibility_{landslide_slug}.tif"
+            if not landslide_path.exists():
+                landslide_path = raw_root / "landslide_susceptibility" / "global" / f"nasa_landslide_susceptibility_{iso3.lower()}.tif"
+            if not landslide_path.exists():
+                landslide_path = None
+            roads_chunk["landslide_susceptibility"] = (
+                _sample_raster_paths([landslide_path], probe_points, reducer="first_valid")
+                if landslide_path
+                else np.nan
+            )
+            layer_columns_static.append("landslide_susceptibility")
+
+        if datasets_cfg.get("gem", {}).get("enabled", True):
+            print(f"[overlay] {chunk_label} static gem start", flush=True)
+            gem_path = raw_root / "gem" / "global" / "v2023_1_pga_475_rock_3min.tif"
+            roads_chunk["gem_pga_475y"] = (
+                _sample_raster_paths([gem_path], probe_points, reducer="first_valid")
+                if gem_path.exists()
+                else np.nan
+            )
+            layer_columns_static.append("gem_pga_475y")
+
+        if datasets_cfg.get("liquefaction", {}).get("enabled", True):
+            print(f"[overlay] {chunk_label} static liquefaction start", flush=True)
+            liquefaction_path = raw_root / "liquefaction" / "global" / "liquefaction_v1_deg.tif"
+            roads_chunk["liquefaction_class"] = (
+                _sample_raster_paths([liquefaction_path], probe_points, reducer="first_valid")
+                if liquefaction_path.exists()
+                else np.nan
+            )
+            layer_columns_static.append("liquefaction_class")
+
+        if datasets_cfg.get("worldcover", {}).get("enabled", True):
+            print(f"[overlay] {chunk_label} static worldcover start", flush=True)
+            worldcover_paths = sorted((raw_root / "worldcover").glob("**/*_Map.tif"))
+            roads_chunk["worldcover_class"] = (
+                _sample_raster_paths(worldcover_paths, probe_points, reducer="first_valid", positive_only=True)
+                if worldcover_paths
+                else np.nan
+            )
+            layer_columns_static.append("worldcover_class")
+
+        if datasets_cfg.get("soilgrids", {}).get("enabled", True):
+            for soil_path in sorted((raw_root / "soilgrids").glob("*.tif")):
+                col = f"soil_{soil_path.stem}"
+                print(f"[overlay] {chunk_label} static soilgrids {soil_path.name} start", flush=True)
+                roads_chunk[col] = _sample_raster_paths([soil_path], probe_points, reducer="first_valid")
+                layer_columns_static.append(col)
+
+        if datasets_cfg.get("era5_spi", {}).get("enabled", True):
+            for spi_path in sorted((raw_root / "era5_spi" / "global" / "monthly").glob("GLOBAL-ERA5_LAND_DAILY-spi-*.tif")):
+                col = f"era5_spi_{spi_path.stem.split('-spi-')[-1]}"
+                print(f"[overlay] {chunk_label} static era5_spi {spi_path.name} start", flush=True)
+                roads_chunk[col] = _sample_raster_paths([spi_path], probe_points, reducer="first_valid")
+                layer_columns_static.append(col)
+
+        if datasets_cfg.get("flopros", {}).get("enabled", True):
+            print(f"[overlay] {chunk_label} static flopros start", flush=True)
+            roads_chunk, flopros_cols = _add_flopros(roads_chunk, probe_points, raw_root)
+            layer_columns_static.extend(flopros_cols)
+
+        return roads_chunk, layer_columns_static
+
+    def _compute_week_chunk(
+        roads_chunk: gpd.GeoDataFrame,
+        probe_points: gpd.GeoSeries,
+        lons: np.ndarray,
+        lats: np.ndarray,
+        road_ux: np.ndarray,
+        road_uy: np.ndarray,
+        merge_groups: dict[str, tuple[np.ndarray, np.ndarray] | None],
+        *,
+        week_start: date,
+        chunk_label: str,
+    ) -> pd.DataFrame:
+        week_t0 = time.time()
         token = _week_token(week_start)
         week_end = _week_end(week_start, end_date, step_days)
-        week_df = pd.DataFrame({"road_row_id": roads["road_row_id"].values})
+        verbose_week_logs = not args.compact_weekly_logs
+        if verbose_week_logs:
+            print(f"[overlay] {chunk_label} week={week_start.isoformat()} start", flush=True)
+        week_df = pd.DataFrame({"road_row_id": roads_chunk["road_row_id"].values})
 
         if chirps_enabled:
-            week_paths = _chirps_daily_paths_for_week(
-                raw_root,
-                version=chirps_version,
-                daily_variant=daily_variant,
-                week_start=week_start,
-                week_end=week_end,
-            )
+            week_paths = _chirps_daily_paths_for_week(raw_root, version=chirps_version, daily_variant=daily_variant, week_start=week_start, week_end=week_end)
+            print(f"[overlay] {chunk_label} week={week_start.isoformat()} chirps start paths={len(week_paths)}", flush=True)
             col = f"chirps_week_{token}_mm"
             max_24h_col = f"chirps_24h_max_week_{token}_mm"
-            week_df[col] = _sample_raster_paths(week_paths, probe_points, reducer="sum")
-            week_df[max_24h_col] = _sample_raster_paths(week_paths, probe_points, reducer="max")
+            groups = merge_groups.get("chirps")
+            reps = groups[0] if groups is not None else np.arange(len(probe_points))
+            points = probe_points.iloc[reps] if groups is not None else probe_points
+            week_df[col] = _expand_multiscale_values(_sample_raster_paths(week_paths, points, reducer="sum"), groups, len(probe_points))
+            week_df[max_24h_col] = _expand_multiscale_values(_sample_raster_paths(week_paths, points, reducer="max"), groups, len(probe_points))
+            if groups is not None:
+                multiscale_sampling_rows.append({"chunk": chunk_label, "week_start": week_start.isoformat(), "source": "chirps", "cell_m": source_cell_m["chirps"], "n_roads": len(probe_points), "n_representatives": len(reps)})
 
-        flood_col = f"flood_week_{token}"
-        week_df[flood_col] = _sample_raster_paths(
-            flood_by_week.get(week_start, []),
-            probe_points,
-            reducer="max",
-            positive_only=True,
-        )
-        week_df[flood_col] = week_df[flood_col].fillna(0.0)
+        if flood_enabled:
+            flood_paths = flood_by_week.get(week_start, [])
+            print(f"[overlay] {chunk_label} week={week_start.isoformat()} flood start rasters={len(flood_paths)}", flush=True)
+            flood_col = f"flood_week_{token}"
+            groups = merge_groups.get("flood")
+            reps = groups[0] if groups is not None else np.arange(len(probe_points))
+            points = probe_points.iloc[reps] if groups is not None else probe_points
+            week_df[flood_col] = _expand_multiscale_values(_sample_raster_paths(flood_paths, points, reducer="max", positive_only=True), groups, len(probe_points))
+            # Keep NaN where flood data coverage is absent. Downstream threshold logic
+            # treats NaN as "no evidence" rather than "confirmed no flood".
+            flood_data_col = f"meta_flood_week_{token}_has_data"
+            week_df[flood_data_col] = pd.to_numeric(week_df[flood_col], errors="coerce").notna().astype(int)
+            if groups is not None:
+                multiscale_sampling_rows.append({"chunk": chunk_label, "week_start": week_start.isoformat(), "source": "flood", "cell_m": source_cell_m["flood"], "n_roads": len(probe_points), "n_representatives": len(reps)})
 
-        flood_depth_col = f"flood_depth_week_{token}_max_m"
-        week_df[flood_depth_col] = _sample_raster_paths(
-            flood_depth_by_week.get(week_start, []),
-            probe_points,
-            reducer="max",
-            positive_only=True,
-        )
+        if flood_depth_enabled:
+            flood_depth_paths = flood_depth_by_week.get(week_start, [])
+            print(f"[overlay] {chunk_label} week={week_start.isoformat()} flood_depth start rasters={len(flood_depth_paths)}", flush=True)
+            flood_depth_col = f"flood_depth_week_{token}_max_m"
+            groups = merge_groups.get("flood_depth")
+            reps = groups[0] if groups is not None else np.arange(len(probe_points))
+            points = probe_points.iloc[reps] if groups is not None else probe_points
+            week_df[flood_depth_col] = _expand_multiscale_values(_sample_raster_paths(flood_depth_paths, points, reducer="max", positive_only=True), groups, len(probe_points))
+            if groups is not None:
+                multiscale_sampling_rows.append({"chunk": chunk_label, "week_start": week_start.isoformat(), "source": "flood_depth", "cell_m": source_cell_m["flood_depth"], "n_roads": len(probe_points), "n_representatives": len(reps)})
 
         if vis_enabled:
+            print(f"[overlay] {chunk_label} week={week_start.isoformat()} visibility start", flush=True)
             vis_col = f"visibility_week_{token}_min_m"
-            week_df[vis_col] = _sample_noaa_visibility_weekly_min_m(
-                raw_root,
-                iso3,
-                probe_points,
-                week_start=week_start,
-                week_end=week_end,
-            )
+            groups = merge_groups.get("visibility")
+            reps = groups[0] if groups is not None else np.arange(len(probe_points))
+            points = probe_points.iloc[reps] if groups is not None else probe_points
+            week_df[vis_col] = _expand_multiscale_values(_sample_noaa_visibility_weekly_min_m(raw_root, iso3, points, week_start=week_start, week_end=week_end), groups, len(probe_points))
+            if groups is not None:
+                multiscale_sampling_rows.append({"chunk": chunk_label, "week_start": week_start.isoformat(), "source": "visibility", "cell_m": source_cell_m["visibility"], "n_roads": len(probe_points), "n_representatives": len(reps)})
 
         if era5_enabled:
-            ds = _open_era5_dataset(era5_paths)
+            week_era5_paths = _era5_paths_for_window(era5_paths, week_start, week_end)
+            if verbose_week_logs:
+                print(f"[overlay] {chunk_label} week={week_start.isoformat()} era5 open files={len(week_era5_paths)}", flush=True)
+            ds = _cached_era5_dataset(week_era5_paths)
             try:
-                weekly_specs = {
-                    "t2m": ("mean", "max"),
-                    "skt": ("mean", "max"),
-                    "tp": ("sum",),
-                    "swvl1": ("mean",),
-                    "u10": ("mean",),
-                    "v10": ("mean",),
-                }
+                groups = merge_groups.get("era5")
+                reps = groups[0] if groups is not None else np.arange(len(lons))
+                sample_lons = lons[reps] if groups is not None else lons
+                sample_lats = lats[reps] if groups is not None else lats
+                sample_ux = road_ux[reps] if groups is not None else road_ux
+                sample_uy = road_uy[reps] if groups is not None else road_uy
+                if groups is not None:
+                    multiscale_sampling_rows.append({"chunk": chunk_label, "week_start": week_start.isoformat(), "source": "era5", "cell_m": source_cell_m["era5"], "n_roads": len(lons), "n_representatives": len(reps)})
+                weekly_specs = {"t2m": ("mean", "max"), "skt": ("mean", "max"), "tp": ("sum",), "swvl1": ("mean",), "u10": ("mean",), "v10": ("mean",)}
+                if args.era5_precip_only:
+                    weekly_specs = {"tp": ("sum",)}
                 for var, reducers in weekly_specs.items():
                     if var not in ds:
                         continue
                     for reducer in reducers:
+                        t0 = time.time()
                         col = f"era5_{var}_week_{token}_{reducer}"
-                        week_df[col] = _sample_netcdf_var_chunked(
-                            ds[var],
-                            lons,
-                            lats,
-                            start_date=week_start,
-                            end_date=week_end,
-                            reducer=reducer,
-                            batch_size=point_batch_size,
-                        )
+                        if verbose_week_logs:
+                            print(f"[overlay] {chunk_label} week={week_start.isoformat()} era5 {var}/{reducer} start", flush=True)
+                        sampled = _sample_netcdf_var_chunked(ds[var], sample_lons, sample_lats, start_date=week_start, end_date=week_end, reducer=reducer, batch_size=point_batch_size)
+                        week_df[col] = _expand_multiscale_values(sampled, groups, len(lons))
+                        if verbose_week_logs:
+                            print(f"[overlay] {chunk_label} week={week_start.isoformat()} era5 {var}/{reducer} done elapsed_s={time.time() - t0:.1f}", flush=True)
                         if var == "skt" and reducer == "max":
                             pavement_col = f"pavement_surface_temperature_week_{token}_max_c"
                             week_df[pavement_col] = pd.to_numeric(week_df[col], errors="coerce") - 273.15
@@ -1087,34 +1329,51 @@ def main() -> None:
                             percentile_col = f"soil_moisture_week_{token}_local_percentile"
                             week_df[percentile_col] = _local_percentile(week_df[col])
 
-                for reducer in ("mean", "max"):
-                    col = f"era5_wind_speed_week_{token}_{reducer}"
-                    week_df[col] = _sample_netcdf_wind_speed(
-                        ds, lons, lats, start_date=week_start, end_date=week_end, reducer=reducer
-                    )
+                if not args.era5_precip_only:
+                    for reducer in ("mean", "max"):
+                        t0 = time.time()
+                        col = f"era5_wind_speed_week_{token}_{reducer}"
+                        if verbose_week_logs:
+                            print(f"[overlay] {chunk_label} week={week_start.isoformat()} era5 wind_speed/{reducer} start", flush=True)
+                        sampled = _sample_netcdf_wind_speed(ds, sample_lons, sample_lats, start_date=week_start, end_date=week_end, reducer=reducer)
+                        week_df[col] = _expand_multiscale_values(sampled, groups, len(lons))
+                        if verbose_week_logs:
+                            print(f"[overlay] {chunk_label} week={week_start.isoformat()} era5 wind_speed/{reducer} done elapsed_s={time.time() - t0:.1f}", flush=True)
+                if verbose_week_logs:
+                    print(f"[overlay] {chunk_label} week={week_start.isoformat()} era5 tp_1h_max start", flush=True)
                 tp_1h_col = f"era5_tp_1h_max_week_{token}_mm_per_h"
-                week_df[tp_1h_col] = _sample_era5_tp_1h_max_mm_per_h(ds, lons, lats, start_date=week_start, end_date=week_end)
+                sampled = _sample_era5_tp_1h_max_mm_per_h(ds, sample_lons, sample_lats, start_date=week_start, end_date=week_end)
+                week_df[tp_1h_col] = _expand_multiscale_values(sampled, groups, len(lons))
                 erosion_pct_col = f"unpaved_erosion_rainfall_week_{token}_local_percentile"
                 week_df[erosion_pct_col] = _local_percentile(week_df[tp_1h_col])
-                tp_daily_sum_max_col = f"era5_tp_daily_sum_max_week_{token}_mm"
-                week_df[tp_daily_sum_max_col] = _sample_era5_tp_daily_sum_weekly_max_mm(
-                    ds, lons, lats, start_date=week_start, end_date=week_end
-                )
-                if args.road_geometry_mode != "probe_point":
+                if not args.skip_era5_daily_sum_max:
+                    if verbose_week_logs:
+                        print(f"[overlay] {chunk_label} week={week_start.isoformat()} era5 tp_daily_sum_max start", flush=True)
+                    tp_daily_sum_max_col = f"era5_tp_daily_sum_max_week_{token}_mm"
+                    sampled = _sample_era5_tp_daily_sum_weekly_max_mm(ds, sample_lons, sample_lats, start_date=week_start, end_date=week_end)
+                    week_df[tp_daily_sum_max_col] = _expand_multiscale_values(sampled, groups, len(lons))
+                if (not args.era5_precip_only) and args.road_geometry_mode != "probe_point":
+                    if verbose_week_logs:
+                        print(f"[overlay] {chunk_label} week={week_start.isoformat()} era5 crosswind start", flush=True)
                     crosswind_col = f"era5_crosswind_10m_week_{token}_max"
-                    week_df[crosswind_col] = _sample_netcdf_crosswind_speed(
-                        ds, lons, lats, road_ux, road_uy, start_date=week_start, end_date=week_end, reducer="max"
-                    )
-                gust_col = f"era5_wind_gust_week_{token}_max"
-                week_df[gust_col] = _sample_era5_gust_speed(ds, lons, lats, start_date=week_start, end_date=week_end)
-                rate_col = f"era5_max_total_precip_rate_week_{token}_mm_per_h"
-                week_df[rate_col] = _sample_era5_rate_mm_per_h(
-                    ds, ("mxtpr", "mtpr", "tprate"), lons, lats, start_date=week_start, end_date=week_end
-                )
+                    sampled = _sample_netcdf_crosswind_speed(ds, sample_lons, sample_lats, sample_ux, sample_uy, start_date=week_start, end_date=week_end, reducer="max")
+                    week_df[crosswind_col] = _expand_multiscale_values(sampled, groups, len(lons))
+                if not args.era5_precip_only:
+                    if verbose_week_logs:
+                        print(f"[overlay] {chunk_label} week={week_start.isoformat()} era5 gust start", flush=True)
+                    gust_col = f"era5_wind_gust_week_{token}_max"
+                    sampled = _sample_era5_gust_speed(ds, sample_lons, sample_lats, start_date=week_start, end_date=week_end)
+                    week_df[gust_col] = _expand_multiscale_values(sampled, groups, len(lons))
+                    if verbose_week_logs:
+                        print(f"[overlay] {chunk_label} week={week_start.isoformat()} era5 precip_rate start", flush=True)
+                    rate_col = f"era5_max_total_precip_rate_week_{token}_mm_per_h"
+                    sampled = _sample_era5_rate_mm_per_h(ds, ("mxtpr", "mtpr", "tprate"), sample_lons, sample_lats, start_date=week_start, end_date=week_end)
+                    week_df[rate_col] = _expand_multiscale_values(sampled, groups, len(lons))
             finally:
-                ds.close()
+                pass
 
         if cams_enabled:
+            print(f"[overlay] {chunk_label} week={week_start.isoformat()} cams start", flush=True)
             with tempfile.TemporaryDirectory(prefix=f"cams-overlay-{token}-") as tmpdir:
                 cams_path = cams_zip
                 if zipfile.is_zipfile(cams_zip):
@@ -1129,53 +1388,109 @@ def main() -> None:
                         if var not in ds_cams:
                             continue
                         for reducer in ("mean", "max"):
+                            t0 = time.time()
                             col = f"cams_{var}_week_{token}_{reducer}"
-                            week_df[col] = _sample_netcdf_var_chunked(
-                                ds_cams[var],
-                                lons,
-                                lats,
-                                start_date=week_start,
-                                end_date=week_end,
-                                reducer=reducer,
-                                batch_size=point_batch_size,
-                            )
+                            print(f"[overlay] {chunk_label} week={week_start.isoformat()} cams {var}/{reducer} start", flush=True)
+                            week_df[col] = _sample_netcdf_var_chunked(ds_cams[var], lons, lats, start_date=week_start, end_date=week_end, reducer=reducer, batch_size=point_batch_size)
+                            print(f"[overlay] {chunk_label} week={week_start.isoformat()} cams {var}/{reducer} done elapsed_s={time.time() - t0:.1f}", flush=True)
                 finally:
                     ds_cams.close()
 
-        return week_start, week_df
+        if verbose_week_logs:
+            print(f"[overlay] {chunk_label} week={week_start.isoformat()} done elapsed_s={time.time() - week_t0:.1f}", flush=True)
+        return week_df
 
-    futures = []
-    weekly_nan_rows: list[dict[str, object]] = []
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        for week_start in week_starts:
-            futures.append(ex.submit(_compute_week, week_start))
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="Weekly overlay", unit="week"):
-            week_start, week_df = fut.result()
+    print("Starting chunked overlay...", flush=True)
+    chunk_bar = tqdm(range(n_chunks), desc="Road chunks", unit="chunk")
+    for chunk_idx in chunk_bar:
+        chunk_t0 = time.time()
+        skip = chunk_idx * road_chunk_size
+        chunk_label = f"chunk {chunk_idx + 1}/{n_chunks}"
+        print(f"[overlay] {chunk_label} read start skip={skip:,} max={road_chunk_size:,}", flush=True)
+        roads = load_roads(
+            project_root,
+            iso3,
+            country,
+            geometry_mode=args.road_geometry_mode,
+            skip_features=skip,
+            max_features=road_chunk_size,
+            road_row_offset=next_road_row_id,
+            road_backend=args.road_backend,
+            postgis_dsn=args.postgis_dsn,
+            postgis_table=args.postgis_table,
+        )
+        if roads.empty:
+            print(f"[overlay] {chunk_label} no roads loaded", flush=True)
+            continue
+        next_road_row_id += len(roads)
+        print(f"[overlay] {chunk_label} loaded roads={len(roads):,} road_row_id_max={next_road_row_id - 1:,}", flush=True)
+        if args.road_geometry_mode == "probe_point":
+            roads["probe_point"] = roads.geometry
+        else:
+            roads["probe_point"] = roads.geometry.apply(geometry_probe_point)
+        probe_points = gpd.GeoSeries(roads["probe_point"], crs="EPSG:4326")
+        lons = np.asarray([pt.x if pt and not pt.is_empty else np.nan for pt in probe_points], dtype="float64")
+        lats = np.asarray([pt.y if pt and not pt.is_empty else np.nan for pt in probe_points], dtype="float64")
+        if args.road_geometry_mode == "probe_point":
+            road_ux = np.zeros(len(roads), dtype="float64")
+            road_uy = np.ones(len(roads), dtype="float64")
+        else:
+            road_ux, road_uy = _road_unit_vectors(roads)
+        merge_groups: dict[str, tuple[np.ndarray, np.ndarray] | None] = {}
+        if args.multiscale_road_merge:
+            for source, cell_m in source_cell_m.items():
+                merge_groups[source] = _multiscale_group_index(roads, probe_points, cell_m=cell_m)
+
+        roads, layer_columns_static = _compute_static_chunk(roads, probe_points, chunk_label=chunk_label)
+        layer_columns_static_set.update(layer_columns_static)
+        static_cols = ["road_row_id", "surface_group", "geometry", *layer_columns_static]
+        roads_static = roads[static_cols].copy()
+        for row in _layer_stats(roads_static, layer_columns_static):
+            row["chunk_idx"] = chunk_idx
+            static_stats_rows.append(row)
+        static_part = static_dir / f"part_{chunk_idx:05d}.parquet"
+        print(f"[overlay] {chunk_label} write static {static_part.name} rows={len(roads_static):,}", flush=True)
+        roads_static.to_parquet(static_part, index=False)
+
+        week_iter = tqdm(
+            week_starts,
+            desc=f"{iso3} {chunk_label} weeks" if args.compact_weekly_logs else f"{chunk_label} weeks",
+            unit="week",
+            leave=False,
+        )
+        for week_idx, week_start in enumerate(week_iter, start=1):
             token = _week_token(week_start)
-            for col in [c for c in week_df.columns if c != "road_row_id"]:
+            week_df = _compute_week_chunk(roads, probe_points, lons, lats, road_ux, road_uy, merge_groups, week_start=week_start, chunk_label=chunk_label)
+            week_cols = [col for col in week_df.columns if col != "road_row_id"]
+            layer_columns_weekly_set.update(week_cols)
+            for col in week_cols:
                 numeric = pd.to_numeric(week_df[col], errors="coerce")
                 n_total = int(len(numeric))
                 n_nan = int(numeric.isna().sum())
-                nan_share = float(n_nan / n_total) if n_total else float("nan")
-                weekly_nan_rows.append(
-                    {
-                        "week_start": week_start.isoformat(),
-                        "week_token": token,
-                        "column": col,
-                        "n_total": n_total,
-                        "n_nan": n_nan,
-                        "nan_share": nan_share,
-                    }
-                )
-            weekly_path = weekly_dir / f"week_{token}.parquet"
-            week_df.to_parquet(weekly_path, index=False)
-            layer_columns_weekly.extend([col for col in week_df.columns if col != "road_row_id"])
+                weekly_nan_rows.append({"chunk_idx": chunk_idx, "week_start": week_start.isoformat(), "week_token": token, "column": col, "n_total": n_total, "n_nan": n_nan, "nan_share": float(n_nan / n_total) if n_total else float("nan")})
+            week_out_dir = weekly_dir / f"week_{token}"
+            week_out_dir.mkdir(parents=True, exist_ok=True)
+            weekly_part = week_out_dir / f"part_{chunk_idx:05d}.parquet"
+            if not args.compact_weekly_logs:
+                print(f"[overlay] {chunk_label} week={week_start.isoformat()} write {weekly_part.name} rows={len(week_df):,}", flush=True)
+            week_df.to_parquet(weekly_part, index=False)
+            del week_df
+            gc.collect()
 
-    layer_columns_weekly = sorted(set(layer_columns_weekly))
-    stats = _layer_stats(roads_static, layer_columns_static)
-    pd.DataFrame(stats).to_csv(out_dir / "layer_summary_static.csv", index=False)
+        del roads, roads_static, probe_points, lons, lats, road_ux, road_uy
+        gc.collect()
+        for cached in era5_dataset_cache.values():
+            cached.close()
+        era5_dataset_cache.clear()
+        print(f"[overlay] {chunk_label} done elapsed_s={time.time() - chunk_t0:.1f}", flush=True)
+
+    layer_columns_static = sorted(layer_columns_static_set)
+    layer_columns_weekly = sorted(layer_columns_weekly_set)
+    pd.DataFrame(static_stats_rows).to_csv(out_dir / "layer_summary_static.csv", index=False)
     weekly_nan_df = pd.DataFrame(weekly_nan_rows)
     weekly_nan_df.to_csv(out_dir / "weekly_nan_diagnostics.csv", index=False)
+    multiscale_sampling_df = pd.DataFrame(multiscale_sampling_rows)
+    multiscale_sampling_df.to_csv(out_dir / "multiscale_sampling_diagnostics.csv", index=False)
     columns_all_nan = 0
     max_nan_share = 0.0
     if not weekly_nan_df.empty:
@@ -1186,23 +1501,30 @@ def main() -> None:
         "country_code": iso3,
         "road_geometry_mode": args.road_geometry_mode,
         "analysis_period": analysis_period,
-        "n_roads": int(len(roads_static)),
+        "n_roads": int(next_road_row_id),
+        "road_chunk_size": road_chunk_size,
+        "n_road_chunks": n_chunks,
         "layer_count_static": len(layer_columns_static),
         "layer_count_weekly": len(layer_columns_weekly),
         "layers_static": layer_columns_static,
-        "nan_diagnostics": {
-            "weekly_columns_all_nan": columns_all_nan,
-            "weekly_max_nan_share": max_nan_share,
+        "nan_diagnostics": {"weekly_columns_all_nan": columns_all_nan, "weekly_max_nan_share": max_nan_share},
+        "multiscale_road_merge": {
+            "enabled": bool(args.multiscale_road_merge),
+            "source_cell_m": source_cell_m,
+            "diagnostics_rows": int(len(multiscale_sampling_df)),
+            "min_representatives": int(multiscale_sampling_df["n_representatives"].min()) if not multiscale_sampling_df.empty else None,
+            "max_representatives": int(multiscale_sampling_df["n_representatives"].max()) if not multiscale_sampling_df.empty else None,
         },
         "outputs": {
-            "roads_static_parquet": str((out_dir / "roads_static.parquet").relative_to(project_root)),
-            "weekly_dir": str(weekly_dir.relative_to(project_root)),
-            "layer_summary_static_csv": str((out_dir / "layer_summary_static.csv").relative_to(project_root)),
-            "weekly_nan_diagnostics_csv": str((out_dir / "weekly_nan_diagnostics.csv").relative_to(project_root)),
+            "static_dir": _relpath(static_dir, project_root),
+            "weekly_dir": _relpath(weekly_dir, project_root),
+            "layer_summary_static_csv": _relpath(out_dir / "layer_summary_static.csv", project_root),
+            "weekly_nan_diagnostics_csv": _relpath(out_dir / "weekly_nan_diagnostics.csv", project_root),
+            "multiscale_sampling_diagnostics_csv": _relpath(out_dir / "multiscale_sampling_diagnostics.csv", project_root),
         },
     }
     (out_dir / "summary.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps(report, indent=2))
+    print(json.dumps(report, indent=2), flush=True)
 
 
 if __name__ == "__main__":

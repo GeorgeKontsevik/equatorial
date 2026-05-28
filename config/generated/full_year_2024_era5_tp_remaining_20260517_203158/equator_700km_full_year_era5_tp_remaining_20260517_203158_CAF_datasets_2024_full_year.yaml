@@ -1,0 +1,1072 @@
+global:
+  data_root: data
+  timeout_seconds: 900
+  max_retries: 4
+  user_agent: equatorial-data-fetch/0.1.0
+study_area:
+  country_code: CAF
+  country_name: Central African Republic
+  slug: central-african-republic
+  bbox:
+  - 13.46
+  - 1.27
+  - 28.37
+  - 12.14
+datasets:
+  gadm:
+    enabled: true
+    source_url: https://geodata.ucdavis.edu/gadm/gadm4.1/gpkg
+    spatial_resolution_raw: vector administrative boundaries
+    country_codes:
+    - CAF
+  road_surface:
+    enabled: true
+    source_url: https://data.humdata.org/organization/heidelberg-institute-for-geoinformation-technology?dataseries_name=Heidelberg%20Institute%20for%20Geoinformation%20Technology%20-%20Road%20Surface%20Data&q=&ext_page_size=25
+    spatial_resolution_raw: vector road segments with binary paved/unpaved attribution
+      (country releases)
+    country_codes:
+    - CAF
+    bbox: &id001
+    - 13.46
+    - 1.27
+    - 28.37
+    - 12.14
+    country_code: CAF
+  chirps:
+    enabled: true
+    version: v3.0
+    frequency: daily
+    region: global
+    daily_variant: sat
+    start_date: '2024-01-01'
+    end_date: '2024-12-31'
+    temporal_resolution: daily
+    bbox: *id001
+    country_code: CAF
+  era5:
+    enabled: true
+    dataset_id: reanalysis-era5-land
+    spatial_resolution_raw: 0.1 degree grid
+    temporal_resolution: hourly
+    source_files:
+    - era5-land-hourly-central-african-republic-2024-01.nc
+    - era5-land-hourly-central-african-republic-2024-02.nc
+    - era5-land-hourly-central-african-republic-2024-03.nc
+    - era5-land-hourly-central-african-republic-2024-04.nc
+    - era5-land-hourly-central-african-republic-2024-05.nc
+    - era5-land-hourly-central-african-republic-2024-06.nc
+    - era5-land-hourly-central-african-republic-2024-07.nc
+    - era5-land-hourly-central-african-republic-2024-08.nc
+    - era5-land-hourly-central-african-republic-2024-09.nc
+    - era5-land-hourly-central-african-republic-2024-10.nc
+    - era5-land-hourly-central-african-republic-2024-11.nc
+    - era5-land-hourly-central-african-republic-2024-12.nc
+    request_defaults:
+      product_type: reanalysis
+      variable:
+      - 2m_temperature
+      - skin_temperature
+      - total_precipitation
+      - volumetric_soil_water_layer_1
+      - 10m_u_component_of_wind
+      - 10m_v_component_of_wind
+      time:
+      - 00:00
+      - 01:00
+      - 02:00
+      - 03:00
+      - 04:00
+      - 05:00
+      - 06:00
+      - 07:00
+      - 08:00
+      - 09:00
+      - '10:00'
+      - '11:00'
+      - '12:00'
+      - '13:00'
+      - '14:00'
+      - '15:00'
+      - '16:00'
+      - '17:00'
+      - '18:00'
+      - '19:00'
+      - '20:00'
+      - '21:00'
+      - '22:00'
+      - '23:00'
+      data_format: netcdf
+      download_format: unarchived
+      area:
+      - '12.14'
+      - '13.46'
+      - '1.27'
+      - '28.37'
+    requests:
+    - target_filename: era5-land-hourly-central-african-republic-2024-01.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - '01'
+    - target_filename: era5-land-hourly-central-african-republic-2024-02.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - '02'
+    - target_filename: era5-land-hourly-central-african-republic-2024-03.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - '03'
+    - target_filename: era5-land-hourly-central-african-republic-2024-04.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - '04'
+    - target_filename: era5-land-hourly-central-african-republic-2024-05.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - '05'
+    - target_filename: era5-land-hourly-central-african-republic-2024-06.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - '06'
+    - target_filename: era5-land-hourly-central-african-republic-2024-07.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - '07'
+    - target_filename: era5-land-hourly-central-african-republic-2024-08.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - 08
+    - target_filename: era5-land-hourly-central-african-republic-2024-09.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - 09
+    - target_filename: era5-land-hourly-central-african-republic-2024-10.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - '10'
+    - target_filename: era5-land-hourly-central-african-republic-2024-11.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - '11'
+    - target_filename: era5-land-hourly-central-african-republic-2024-12.nc
+      request:
+        product_type: reanalysis
+        variable:
+        - total_precipitation
+        year:
+        - '2024'
+        day:
+        - '01'
+        - '02'
+        - '03'
+        - '04'
+        - '05'
+        - '06'
+        - '07'
+        - 08
+        - 09
+        - '10'
+        - '11'
+        - '12'
+        - '13'
+        - '14'
+        - '15'
+        - '16'
+        - '17'
+        - '18'
+        - '19'
+        - '20'
+        - '21'
+        - '22'
+        - '23'
+        - '24'
+        - '25'
+        - '26'
+        - '27'
+        - '28'
+        - '29'
+        - '30'
+        - '31'
+        time:
+        - 00:00
+        - 01:00
+        - 02:00
+        - 03:00
+        - 04:00
+        - 05:00
+        - 06:00
+        - 07:00
+        - 08:00
+        - 09:00
+        - '10:00'
+        - '11:00'
+        - '12:00'
+        - '13:00'
+        - '14:00'
+        - '15:00'
+        - '16:00'
+        - '17:00'
+        - '18:00'
+        - '19:00'
+        - '20:00'
+        - '21:00'
+        - '22:00'
+        - '23:00'
+        data_format: netcdf
+        download_format: unarchived
+        area:
+        - 12.14
+        - 13.46
+        - 1.27
+        - 28.37
+        month:
+        - '12'
+    bbox:
+    - 13.46
+    - 1.27
+    - 28.37
+    - 12.14
+    country_code: CAF
+    start_date: '2024-01-01'
+    end_date: '2024-12-31'
+    request:
+      area:
+      - 12.14
+      - 13.46
+      - 1.27
+      - 28.37
+    target_filename: era5-land-central-african-republic.nc
+  landslide_susceptibility:
+    enabled: true
+    source_url: https://gis.earthdata.nasa.gov/gis05/rest/services/Landslides/Global_Landslide_Susceptibility/ImageServer
+    spatial_resolution_raw: global landslide susceptibility image service at approximately
+      30 arc-seconds
+    temporal_resolution: static susceptibility ranking
+    export_resolution_deg: 0.008333333333333333
+    target_slug: central-african-republic
+    bbox: *id001
+    country_code: CAF
+  flood:
+    enabled: true
+    source_url: https://global-flood.emergency.copernicus.eu/react/general-information/data-access/
+    stac_api_url: https://stac.eodc.eu/api/v1/search
+    collection_id: GFM
+    asset_key: ensemble_flood_extent
+    product: GFM
+    start_date: '2024-01-01'
+    end_date: '2024-12-31'
+    aggregation_period_days: 7
+    spatial_resolution_raw: 20 m Sentinel-1 SAR flood extent, not flood depth
+    temporal_resolution: event-based SAR acquisitions
+    max_items_per_week: 500
+    bbox: *id001
+    country_code: CAF
+  flood_depth:
+    enabled: false
+    source_url: manual flood-depth raster/model output
+    spatial_resolution_raw: source/model dependent
+    temporal_resolution: event, weekly, or scenario static
+    license_or_access_note: Requires explicit source/model licence. GFM flood extent
+      is not flood depth.
+    bbox: *id001
+    country_code: CAF
+  visibility_noaa_isd:
+    enabled: true
+    source_url: https://www.ncei.noaa.gov/data/global-hourly/access
+    history_url: https://www.ncei.noaa.gov/pub/data/noaa/isd-history.csv
+    start_date: '2024-01-01'
+    end_date: '2024-12-31'
+    max_stations: 12
+    spatial_resolution_raw: station observations
+    temporal_resolution: hourly
+    bbox: *id001
+    country_code: CAF
+  cams:
+    enabled: false
+  era5_spi:
+    enabled: false
+  gem:
+    enabled: false
+  liquefaction:
+    enabled: false
+  flopros:
+    enabled: false
+  worldcover:
+    enabled: false
+    year: 2021
+    version: v200
+    layer: Map
+    bbox: *id001
+    country_code: CAF
+  soilgrids:
+    enabled: false
+    bbox: *id001
+    country_code: CAF
+  coastaldem:
+    enabled: false
+    bbox: *id001
+    country_code: CAF
+  ibtracs:
+    enabled: false
+  osm:
+    enabled: false
+notes:
+  sample_iso: CAF

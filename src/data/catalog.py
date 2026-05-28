@@ -78,16 +78,30 @@ def load_catalog(csv_path: Path) -> pd.DataFrame:
 
 
 def upsert_records(existing: pd.DataFrame, records: Iterable[CatalogRecord]) -> pd.DataFrame:
-    """Replace catalog rows for datasets touched in the current run and append new rows."""
+    """Replace matching catalog rows from the current run and append new rows.
+
+    Dataset fetches can be country- or asset-granular.  Replacing all rows for a
+    touched dataset would discard metadata for previously fetched countries.
+    """
 
     frame = existing.copy()
     incoming = list(records)
-    touched_datasets = sorted({record.dataset_name for record in incoming})
-    if touched_datasets:
-        frame = frame.loc[~frame["dataset_name"].isin(touched_datasets)].copy()
 
-    for record in incoming:
-        row = record.to_dict()
+    for row in (record.to_dict() for record in incoming):
+        local_path = row.get("local_path", "")
+        if local_path:
+            keep = ~(
+                (frame["dataset_name"] == row["dataset_name"])
+                & (frame["local_path"] == local_path)
+            )
+        else:
+            keep = ~(
+                (frame["dataset_name"] == row["dataset_name"])
+                & (frame["source_url"] == row["source_url"])
+                & (frame["bbox_if_known"] == row["bbox_if_known"])
+                & (frame["notes"] == row["notes"])
+            )
+        frame = frame.loc[keep].copy()
         frame = pd.concat([frame, pd.DataFrame([row])], ignore_index=True)
 
     frame = frame[CATALOG_FIELDS].sort_values(["dataset_name", "local_path"], kind="stable").reset_index(drop=True)

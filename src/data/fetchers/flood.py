@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from src.data.catalog import CatalogRecord
-from src.data.utils import downloaded_record, ensure_directory, ensure_local_copy, join_notes, manual_record
+from src.data.utils import downloaded_record, ensure_directory, ensure_local_copy, join_notes, manual_record, set_progress_total, update_progress
 
 
 COPERNICUS_GFM_STAC_API = "https://stac.eodc.eu/api/v1/search"
@@ -183,8 +183,16 @@ What to do:
     missing_weeks: list[str] = []
     failed_weeks: list[str] = []
     seen_assets: set[str] = set()
+    total_weeks = len(dates)
+    planned_weeks: list[dict[str, object]] = []
+    reused_total = 0
+    new_total = 0
 
-    for week_start in dates:
+    set_progress_total(context, total_weeks)
+    if context.progress_bar is not None:
+        context.progress_bar.set_description("flood plan")
+        context.progress_bar.refresh()
+    for week_idx, week_start in enumerate(dates, start=1):
         week_end = _week_end(week_start, window_days=aggregation_days, hard_end=hard_end)
         try:
             features = _search_week_features(
@@ -198,72 +206,202 @@ What to do:
             )
         except HTTPError as exc:  # pragma: no cover - provider/network dependent
             failed_weeks.append(f"{week_start.isoformat()}..{week_end.isoformat()} :: HTTP {exc.code}")
+            if context.logger:
+                pct = int(round(week_idx / total_weeks * 100))
+                context.logger.info(
+                    "[flood-plan] %s/%s (%s%%) week=%s..%s status=failed",
+                    week_idx,
+                    total_weeks,
+                    pct,
+                    week_start.isoformat(),
+                    week_end.isoformat(),
+                )
+            update_progress(context)
             continue
         except Exception as exc:  # pragma: no cover - provider/network dependent
             failed_weeks.append(f"{week_start.isoformat()}..{week_end.isoformat()} :: {exc}")
+            if context.logger:
+                pct = int(round(week_idx / total_weeks * 100))
+                context.logger.info(
+                    "[flood-plan] %s/%s (%s%%) week=%s..%s status=failed",
+                    week_idx,
+                    total_weeks,
+                    pct,
+                    week_start.isoformat(),
+                    week_end.isoformat(),
+                )
+            update_progress(context)
             continue
 
         if not features:
             missing_weeks.append(f"{week_start.isoformat()}..{week_end.isoformat()} (no STAC items)")
+            if context.logger:
+                pct = int(round(week_idx / total_weeks * 100))
+                context.logger.info(
+                    "[flood-plan] %s/%s (%s%%) week=%s..%s status=missing assets=0",
+                    week_idx,
+                    total_weeks,
+                    pct,
+                    week_start.isoformat(),
+                    week_end.isoformat(),
+                )
+            update_progress(context)
             continue
 
-        selected_feature: dict | None = None
-        selected_dt = datetime.min.replace(tzinfo=UTC)
-        for feature in features:
-            assets = feature.get("assets", {})
-            if not isinstance(assets, dict) or asset_key not in assets:
-                continue
-            stamp = _item_datetime(feature)
-            if stamp >= selected_dt:
-                selected_feature = feature
-                selected_dt = stamp
-        if selected_feature is None:
+        features_with_asset = [
+            feature
+            for feature in features
+            if isinstance(feature.get("assets"), dict) and asset_key in feature["assets"]
+        ]
+        if not features_with_asset:
             missing_weeks.append(f"{week_start.isoformat()}..{week_end.isoformat()} (asset `{asset_key}` missing)")
+            if context.logger:
+                pct = int(round(week_idx / total_weeks * 100))
+                context.logger.info(
+                    "[flood-plan] %s/%s (%s%%) week=%s..%s status=missing_asset assets=0",
+                    week_idx,
+                    total_weeks,
+                    pct,
+                    week_start.isoformat(),
+                    week_end.isoformat(),
+                )
+            update_progress(context)
             continue
 
-        selected_assets = selected_feature.get("assets", {})
-        asset = selected_assets.get(asset_key, {})
-        source_url = str(asset.get("href", "")).strip()
-        if not source_url:
-            missing_weeks.append(f"{week_start.isoformat()}..{week_end.isoformat()} (empty asset href)")
-            continue
-        if source_url in seen_assets:
-            continue
-        seen_assets.add(source_url)
+        planned_assets: list[dict[str, object]] = []
+        for selected_feature in sorted(features_with_asset, key=_item_datetime):
+            selected_assets = selected_feature.get("assets", {})
+            asset = selected_assets.get(asset_key, {})
+            source_url = str(asset.get("href", "")).strip()
+            if not source_url:
+                continue
+            if source_url in seen_assets:
+                continue
+            seen_assets.add(source_url)
 
-        stamp = _item_datetime(selected_feature)
-        stamp_date = stamp.date() if stamp != datetime.min.replace(tzinfo=UTC) else week_start
-        year = stamp_date.year
-        doy = stamp_date.timetuple().tm_yday
-        date_dir = ensure_directory(dataset_dir / f"{year}" / f"{doy:03d}")
-        source_name = Path(source_url).name
-        filename = source_name if source_name else f"{selected_feature.get('id', 'gfm')}_{asset_key}.tif"
-        local_target = date_dir / filename
+            stamp = _item_datetime(selected_feature)
+            stamp_date = stamp.date() if stamp != datetime.min.replace(tzinfo=UTC) else week_start
+            year = stamp_date.year
+            doy = stamp_date.timetuple().tm_yday
+            date_dir = ensure_directory(dataset_dir / f"{year}" / f"{doy:03d}")
+            source_name = Path(source_url).name
+            filename = source_name if source_name else f"{selected_feature.get('id', 'gfm')}_{asset_key}.tif"
+            local_target = date_dir / filename
 
-        try:
-            local_path, reused = ensure_local_copy(source_url, local_target, context)
-        except Exception as exc:  # pragma: no cover - provider/network dependent
-            failed_weeks.append(f"{week_start.isoformat()}..{week_end.isoformat()} :: download failed: {exc}")
+            planned_assets.append(
+                {
+                    "feature": selected_feature,
+                    "source_url": source_url,
+                    "local_target": local_target,
+                    "stamp": stamp,
+                }
+            )
+
+        if not planned_assets:
+            missing_weeks.append(f"{week_start.isoformat()}..{week_end.isoformat()} (asset hrefs empty or duplicate)")
+            if context.logger:
+                pct = int(round(week_idx / total_weeks * 100))
+                context.logger.info(
+                    "[flood-plan] %s/%s (%s%%) week=%s..%s status=empty assets=0",
+                    week_idx,
+                    total_weeks,
+                    pct,
+                    week_start.isoformat(),
+                    week_end.isoformat(),
+                )
+            update_progress(context)
             continue
 
-        records.append(
-            downloaded_record(
-                dataset_name="flood",
-                source_url=source_url,
-                local_path=local_path,
-                context=context,
-                license_or_access_note=COPERNICUS_GFM_LICENSE_NOTE,
-                spatial_resolution_raw=spatial_resolution,
-                temporal_resolution=temporal_resolution,
-                bbox=bbox,
-                notes=join_notes(
-                    f"Copernicus GFM `{asset_key}` selected for weekly window {week_start.isoformat()}..{week_end.isoformat()}.",
-                    f"STAC item: `{selected_feature.get('id', '')}`.",
-                    f"Observation datetime (UTC): {stamp.isoformat()}." if stamp != datetime.min.replace(tzinfo=UTC) else "",
-                    "Reused an existing local copy." if reused else "Downloaded from Copernicus GFM data store.",
-                ),
-            ),
+        planned_weeks.append(
+            {
+                "week_idx": week_idx,
+                "week_start": week_start,
+                "week_end": week_end,
+                "assets": planned_assets,
+            }
         )
+        if context.logger:
+            pct = int(round(week_idx / total_weeks * 100))
+            context.logger.info(
+                "[flood-plan] %s/%s (%s%%) week=%s..%s status=planned assets=%s",
+                week_idx,
+                total_weeks,
+                pct,
+                week_start.isoformat(),
+                week_end.isoformat(),
+                len(planned_assets),
+            )
+
+        update_progress(context)
+
+    total_assets = sum(len(week["assets"]) for week in planned_weeks)
+    set_progress_total(context, int(total_assets))
+    if context.progress_bar is not None:
+        context.progress_bar.n = 0
+        context.progress_bar.set_description("flood fetch")
+        context.progress_bar.refresh()
+
+    for planned_week in planned_weeks:
+        week_idx = int(planned_week["week_idx"])
+        week_start = planned_week["week_start"]
+        week_end = planned_week["week_end"]
+        planned_assets = planned_week["assets"]
+        week_reused = 0
+        week_new = 0
+        downloaded_this_week = 0
+        for planned_asset in planned_assets:
+            selected_feature = planned_asset["feature"]
+            source_url = str(planned_asset["source_url"])
+            local_target = Path(planned_asset["local_target"])
+            stamp = planned_asset["stamp"]
+
+            try:
+                local_path, reused = ensure_local_copy(source_url, local_target, context)
+            except Exception as exc:  # pragma: no cover - provider/network dependent
+                failed_weeks.append(f"{week_start.isoformat()}..{week_end.isoformat()} :: download failed: {exc}")
+                continue
+            if reused:
+                week_reused += 1
+                reused_total += 1
+            else:
+                week_new += 1
+                new_total += 1
+
+            downloaded_this_week += 1
+            records.append(
+                downloaded_record(
+                    dataset_name="flood",
+                    source_url=source_url,
+                    local_path=local_path,
+                    context=context,
+                    license_or_access_note=COPERNICUS_GFM_LICENSE_NOTE,
+                    spatial_resolution_raw=spatial_resolution,
+                    temporal_resolution=temporal_resolution,
+                    bbox=bbox,
+                    notes=join_notes(
+                        f"Copernicus GFM `{asset_key}` selected for weekly window {week_start.isoformat()}..{week_end.isoformat()}.",
+                        f"STAC item: `{selected_feature.get('id', '')}`.",
+                        f"Observation datetime (UTC): {stamp.isoformat()}." if stamp != datetime.min.replace(tzinfo=UTC) else "",
+                        "Reused an existing local copy." if reused else "Downloaded from Copernicus GFM data store.",
+                    ),
+                ),
+            )
+        if downloaded_this_week == 0:
+            missing_weeks.append(f"{week_start.isoformat()}..{week_end.isoformat()} (asset hrefs empty or downloads failed)")
+        if context.logger:
+            pct = int(round(week_idx / total_weeks * 100))
+            context.logger.info(
+                "[flood-progress] %s/%s (%s%%) week=%s..%s status=ok reused=%s new=%s totals(reused=%s,new=%s)",
+                week_idx,
+                total_weeks,
+                pct,
+                week_start.isoformat(),
+                week_end.isoformat(),
+                week_reused,
+                week_new,
+                reused_total,
+                new_total,
+            )
 
     if records:
         if missing_weeks and context.logger:

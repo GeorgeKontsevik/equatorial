@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from urllib.parse import urlencode
 
+import rasterio
+
 from src.data.catalog import CatalogRecord
 from src.data.utils import downloaded_record, ensure_directory, join_notes, manual_record, validate_download
 
@@ -26,6 +28,19 @@ def _bbox_to_size(bbox: list[float], pixel_deg: float) -> tuple[int, int]:
     width = max(1, int(math.ceil((maxx - minx) / pixel_deg)))
     height = max(1, int(math.ceil((maxy - miny) / pixel_deg)))
     return width, height
+
+
+def _validate_raster(path) -> tuple[bool, str]:
+    ok, reason = validate_download(path)
+    if not ok:
+        return False, reason
+    try:
+        with rasterio.open(path) as dataset:
+            if dataset.width <= 0 or dataset.height <= 0:
+                return False, "raster has invalid dimensions"
+    except Exception as exc:
+        return False, f"raster validation failed: {exc}"
+    return True, ""
 
 
 def fetch(dataset_cfg: dict, context) -> list[CatalogRecord]:
@@ -65,7 +80,7 @@ What to do:
     target_path = target_dir / f"nasa_landslide_susceptibility_{slug}.tif"
 
     if target_path.exists():
-        ok, _ = validate_download(target_path)
+        ok, _ = _validate_raster(target_path)
         if ok:
             return [
                 downloaded_record(
@@ -108,6 +123,10 @@ What to do:
     for export_url in export_urls:
         try:
             download_file(export_url, target_path, context)
+            ok, reason = _validate_raster(target_path)
+            if not ok:
+                target_path.unlink(missing_ok=True)
+                raise ValueError(reason)
             selected_export_url = export_url
             break
         except Exception as exc:  # pragma: no cover - runtime/provider dependent

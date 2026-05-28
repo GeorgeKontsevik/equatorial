@@ -6,16 +6,17 @@ import hashlib
 import json
 import logging
 import os
+import shutil
+import subprocess
 import tarfile
 import time
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
-import httpx
 import rasterio
 import xarray as xr
 from rasterio.errors import RasterioIOError
@@ -25,6 +26,24 @@ from src.data.catalog import CatalogRecord
 
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_MAX_RETRIES = 3
+
+
+def _run_aria2_with_logging(
+    cmd: list[str],
+    logger: logging.Logger | None,
+) -> int:
+    """Run aria2c with direct console output so native progress is visible."""
+
+    result = subprocess.run(cmd, check=False)
+    return int(result.returncode)
+
+
+class DownloadError(RuntimeError):
+    """Download failed after the transfer tool returned a concrete exit code."""
+
+    def __init__(self, message: str, *, returncode: int | None = None) -> None:
+        super().__init__(message)
+        self.returncode = returncode
 
 
 @dataclass(slots=True)
@@ -41,6 +60,9 @@ class FetchContext:
     max_retries: int = DEFAULT_MAX_RETRIES
     user_agent: str = "equatorial-data-fetch/0.1.0"
     logger: logging.Logger | None = None
+    active_dataset: str = ""
+    reuse_stats: dict[str, dict[str, int]] = field(default_factory=dict)
+    progress_bar: Any | None = None
 
 
 def utc_now_iso() -> str:
@@ -76,7 +98,7 @@ def load_project_env(project_root: Path) -> None:
             os.environ[key] = value
 
 
-def configure_logging(logs_root: Path, logger_name: str = "equatorial.data") -> logging.Logger:
+def configure_logging(logs_root: Path, logger_name: str = "equatorial.data", *, console_level: int = logging.INFO) -> logging.Logger:
     """Configure a file and stderr logger for the current run."""
 
     ensure_directory(logs_root)
@@ -93,6 +115,7 @@ def configure_logging(logs_root: Path, logger_name: str = "equatorial.data") -> 
     logger.addHandler(file_handler)
 
     stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(console_level)
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
 
@@ -142,20 +165,57 @@ def download_file(url: str, target_path: Path, context: FetchContext) -> Path:
     """Download a remote file with retry logic and atomic replacement."""
 
     ensure_directory(target_path.parent)
-    headers = {"User-Agent": context.user_agent}
     last_error: Exception | None = None
     temp_path = target_path.with_suffix(target_path.suffix + ".part")
+    aria2c_path = shutil.which("aria2c")
+    if aria2c_path is None:
+        raise RuntimeError("aria2c is required for downloads but was not found in PATH.")
+    active_dataset = (context.active_dataset or "").strip().lower()
+    is_flood = active_dataset == "flood"
+    split_count = 1 if active_dataset == "flood" else 8
+    max_connections = 1 if active_dataset == "flood" else 8
+    min_split_size = "1024M" if active_dataset == "flood" else "1M"
+    continue_download = "false" if is_flood else "true"
+    aria2_control_path = Path(str(temp_path) + ".aria2")
 
     for attempt in range(1, context.max_retries + 1):
         try:
-            if context.logger:
+            if is_flood:
+                temp_path.unlink(missing_ok=True)
+                aria2_control_path.unlink(missing_ok=True)
+            if context.logger and os.getenv("EQUATORIAL_VERBOSE_DOWNLOADS", "").strip() == "1":
                 context.logger.info("Downloading %s -> %s (attempt %s/%s)", url, target_path, attempt, context.max_retries)
-            with httpx.stream("GET", url, timeout=context.timeout_seconds, headers=headers, follow_redirects=True) as response:
-                response.raise_for_status()
-                with temp_path.open("wb") as handle:
-                    for chunk in response.iter_bytes():
-                        if chunk:
-                            handle.write(chunk)
+            cmd = [
+                aria2c_path,
+                "--allow-overwrite=true",
+                "--auto-file-renaming=false",
+                f"--continue={continue_download}",
+                "--quiet=true",
+                "--enable-color=false",
+                "--console-log-level=warn",
+                "--show-console-readout=false",
+                "--truncate-console-readout=true",
+                "--summary-interval=10",
+                "--download-result=hide",
+                "--max-connection-per-server",
+                str(max_connections),
+                "--split",
+                str(split_count),
+                "--min-split-size",
+                min_split_size,
+                "--timeout",
+                str(max(1, min(600, int(context.timeout_seconds)))),
+                "--user-agent",
+                context.user_agent,
+                "--dir",
+                str(target_path.parent),
+                "--out",
+                temp_path.name,
+                url,
+            ]
+            rc = _run_aria2_with_logging(cmd, context.logger)
+            if rc != 0:
+                raise DownloadError(f"aria2c failed with return code {rc}", returncode=rc)
             temp_path.replace(target_path)
             ok, reason = validate_download(target_path)
             if not ok:
@@ -167,6 +227,10 @@ def download_file(url: str, target_path: Path, context: FetchContext) -> Path:
                 context.logger.warning("Download failed for %s: %s", url, exc)
             if temp_path.exists():
                 temp_path.unlink()
+            if aria2_control_path.exists():
+                aria2_control_path.unlink()
+            if isinstance(exc, DownloadError) and exc.returncode == 3:
+                break
             if attempt < context.max_retries:
                 time.sleep(min(2 ** attempt, 10))
 
@@ -176,18 +240,78 @@ def download_file(url: str, target_path: Path, context: FetchContext) -> Path:
 def ensure_local_copy(url: str, target_path: Path, context: FetchContext) -> tuple[Path, bool]:
     """Reuse an existing valid file or download it when missing or invalid."""
 
+    dataset = (context.active_dataset or "unknown").strip() or "unknown"
+    stats = context.reuse_stats.setdefault(dataset, {"total": 0, "reused": 0, "new": 0})
+
     if target_path.exists():
         ok, _ = validate_download(target_path)
         if ok:
-            if context.logger:
-                context.logger.info("Reusing existing file: %s", target_path)
+            stats["total"] += 1
+            stats["reused"] += 1
+            update_progress(context)
+            log_reuse_progress(context, dataset)
             return target_path, True
 
         if context.logger:
             context.logger.warning("Existing file is invalid and will be replaced: %s", target_path)
         target_path.unlink()
 
-    return download_file(url, target_path, context), False
+    path = download_file(url, target_path, context)
+    stats["total"] += 1
+    stats["new"] += 1
+    update_progress(context)
+    log_reuse_progress(context, dataset)
+    return path, False
+
+
+def set_progress_total(context: FetchContext, total: int | None) -> None:
+    """Set the active progress bar total when the fetcher can estimate it."""
+
+    bar = context.progress_bar
+    if bar is None or total is None or total <= 0:
+        return
+    bar.total = total
+    bar.refresh()
+
+
+def update_progress(context: FetchContext, *, advance: int = 1) -> None:
+    """Advance the active progress bar, if one is attached to the context."""
+
+    bar = context.progress_bar
+    if bar is None:
+        return
+    stats = context.reuse_stats.get(context.active_dataset or "unknown", {})
+    reused = int(stats.get("reused", 0))
+    new = int(stats.get("new", 0))
+    total = int(stats.get("total", 0))
+    reuse_pct = 100.0 * reused / max(total, 1)
+    bar.set_postfix_str(f"reused={reused} new={new} reuse={reuse_pct:.0f}%")
+    bar.update(advance)
+
+
+def log_reuse_progress(context: FetchContext, dataset: str, *, force: bool = False) -> None:
+    """Emit compact live reuse progress for bulk fetchers."""
+
+    if not context.logger:
+        return
+    stats = context.reuse_stats.get(dataset)
+    if not stats:
+        return
+    total = int(stats.get("total", 0))
+    should_log = force or total in {1, 10, 25, 50} or (total > 0 and total % 50 == 0)
+    if not should_log:
+        return
+    reused = int(stats.get("reused", 0))
+    new = int(stats.get("new", 0))
+    reused_pct = 100.0 * reused / max(total, 1)
+    context.logger.info(
+        "[reuse-progress] dataset=%s total=%s reused=%s new=%s reused_pct=%.1f%%",
+        dataset,
+        total,
+        reused,
+        new,
+        reused_pct,
+    )
 
 
 def write_text(path: Path, content: str) -> Path:

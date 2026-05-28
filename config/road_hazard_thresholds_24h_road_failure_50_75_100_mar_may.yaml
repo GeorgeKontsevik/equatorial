@@ -9,7 +9,7 @@ road_hazard_thresholds:
   - hazard: extreme_rainfall_operational
     surface: paved
     source_row: 'Mapping_Rebuilt: extreme_rainfall_operational/paved'
-    factor: era5_tp_1h_max_weekly_mm_per_h
+    factor: era5_tp_daily_sum_weekly_max_mm
     direction: gte
     surface_scope: paved
     current_status: active_operational_speed_only

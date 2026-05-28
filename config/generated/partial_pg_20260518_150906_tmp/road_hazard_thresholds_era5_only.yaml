@@ -1,0 +1,108 @@
+road_hazard_thresholds:
+  version: 1.1
+  status: curve_rules_from_road_hazard_mapping_rebuilt
+  source_workbook: config/road_hazard_mapping_rebuilt.xlsx
+  source_table: config/weekly_hazard_thresholds_strict.csv
+  source_key: config/road_hazard_source_key.csv
+  note: 'Runnable/diagnostic rules now follow the rebuilt mapping table with linear
+    interpolation between threshold anchors where the table calls for a continuous
+    or logistic-style curve. GFM flood extent remains only a binary operational closure
+    proxy. True flood-depth rules are present but produce no triggers until a real
+    depth raster/model is supplied. Heat and soil-moisture rules write damage/context
+    indices, not automatic traffic-speed closures.
+
+    '
+  threshold_slots:
+    speed_reduction_1:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.1
+    speed_reduction_2:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.25
+    speed_reduction_3:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.4
+    catastrophic_temporary:
+      effect_type: temporary_closure
+      closure_weeks: 1
+    catastrophic_permanent:
+      effect_type: permanent_closure
+      closure_weeks: 5200
+  interpolation:
+    default: linear
+    below_first_anchor: 0
+    above_last_anchor: clamp_to_last_effect
+    closure_weeks: discrete_at_closure_threshold
+  rules:
+  - hazard: extreme_rainfall_operational
+    surface: paved
+    source_row: 'Mapping_Rebuilt: extreme_rainfall_operational/paved'
+    factor: era5_tp_1h_max_weekly_mm_per_h
+    direction: gte
+    surface_scope: paved
+    current_status: active_operational_speed_curve
+    effect_interpolation: linear
+    thresholds:
+      speed_reduction_1: 6.35
+      speed_reduction_2: 20.0
+      speed_reduction_3: 30.0
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+    effects:
+      speed_reduction_1:
+        speed_penalty_fraction: 0.07
+        closure_weeks: null
+      speed_reduction_2:
+        speed_penalty_fraction: 0.2
+        closure_weeks: null
+      speed_reduction_3:
+        speed_penalty_fraction: 0.35
+        closure_weeks: null
+  - hazard: wind_crosswind
+    surface: paved
+    source_row: 'Mapping_Rebuilt: wind_crosswind/paved'
+    factor: era5_crosswind_10m_weekly_max_m_s
+    direction: gte
+    surface_scope: paved
+    current_status: active_operational_speed_curve_no_treefall_closure
+    effect_interpolation: linear
+    thresholds:
+      speed_reduction_1: 20.0
+      speed_reduction_2: 30.0
+      speed_reduction_3: 35.0
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+    effects:
+      speed_reduction_1:
+        speed_penalty_fraction: 0.1
+        closure_weeks: null
+      speed_reduction_2:
+        speed_penalty_fraction: 0.25
+        closure_weeks: null
+      speed_reduction_3:
+        speed_penalty_fraction: 0.4
+        closure_weeks: null
+  - hazard: wind_crosswind
+    surface: unpaved
+    source_row: 'Mapping_Rebuilt: wind_crosswind/unpaved'
+    factor: era5_crosswind_10m_weekly_max_m_s
+    direction: gte
+    surface_scope: unpaved
+    current_status: active_operational_speed_curve_dust_handled_elsewhere
+    effect_interpolation: linear
+    thresholds:
+      speed_reduction_1: 20.0
+      speed_reduction_2: 30.0
+      speed_reduction_3: 35.0
+      catastrophic_temporary: null
+      catastrophic_permanent: null
+    effects:
+      speed_reduction_1:
+        speed_penalty_fraction: 0.1
+        closure_weeks: null
+      speed_reduction_2:
+        speed_penalty_fraction: 0.25
+        closure_weeks: null
+      speed_reduction_3:
+        speed_penalty_fraction: 0.4
+        closure_weeks: null

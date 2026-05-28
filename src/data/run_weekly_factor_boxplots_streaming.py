@@ -1,4 +1,4 @@
-"""Stream annual road-factor boxplots without materializing a full road-level overlay."""
+"""Stream annual road/cell factor boxplots without materializing a full overlay."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import json
 import math
 import os
 import resource
-import sqlite3
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -16,6 +15,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import geopandas as gpd
+import duckdb
 import matplotlib
 import numpy as np
 import pandas as pd
@@ -23,7 +23,13 @@ import pyogrio
 import yaml
 from src.data import run_multisource_road_overlay as overlay
 from src.data.config import load_config
-from src.data.road_input_utils import country_layer, road_surface_class
+from src.data.road_input_utils import (
+    count_roads_postgis,
+    country_layer,
+    geometry_probe_point,
+    load_roads,
+    road_surface_class,
+)
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -61,6 +67,7 @@ FACTOR_LABELS = {
     "pavement_surface_temperature_weekly_max_c": "Pavement surface temperature proxy",
     "soil_moisture_weekly_local_percentile": "Soil moisture local percentile",
     "unpaved_erosion_rainfall_weekly_local_percentile": "Unpaved erosion rainfall local percentile",
+    "era5_tp_daily_sum_weekly_max_mm": "ERA5 max daily precipitation total",
     "era5_tp_1h_max_weekly_mm_per_h": "ERA5 hourly precipitation intensity",
     "era5_crosswind_10m_weekly_max_m_s": "ERA5 10 m crosswind",
 }
@@ -81,7 +88,7 @@ class Rule:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build weekly road-factor boxplots with streaming chunked aggregation.")
+    parser = argparse.ArgumentParser(description="Build weekly road/cell factor boxplots with streaming chunked aggregation.")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--country-code", type=str, required=True)
     parser.add_argument("--damage-config", type=Path, required=True)
@@ -92,6 +99,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--value-round-decimals", type=int, default=6)
     parser.add_argument("--scenario", type=str, default="all")
     parser.add_argument("--max-chunks", type=int, default=None)
+    parser.add_argument("--aggregation-unit", choices=("road", "cell"), default="road")
+    parser.add_argument("--road-backend", choices=("parquet", "gpkg", "postgis"), default="parquet")
+    parser.add_argument("--postgis-dsn", type=str, default="")
+    parser.add_argument("--postgis-table", type=str, default="")
+    parser.add_argument("--era5-cell-m", type=float, default=11000.0)
+    parser.add_argument("--flood-cell-m", type=float, default=20.0)
+    parser.add_argument("--visibility-cell-m", type=float, default=50000.0)
     return parser.parse_args()
 
 
@@ -276,21 +290,43 @@ def _era5_paths_for_week(lookup: dict[tuple[int, int], Path], week_start: date, 
 
 
 def _road_chunk(
-    path: Path,
-    layer_name: str,
+    project_root: Path,
+    iso3: str,
+    country: gpd.GeoDataFrame,
     *,
     skip_features: int,
     chunk_size: int,
     include_orientation: bool,
-    bbox: tuple[float, float, float, float] | None,
+    road_backend: str,
+    postgis_dsn: str,
+    postgis_table: str,
 ) -> gpd.GeoDataFrame:
-    frame = pyogrio.read_dataframe(
-        path,
-        sql=_road_sql(layer_name, include_orientation=include_orientation),
+    columns = [
+        "combined_surface_DL_priority",
+        "combined_surface_osm_priority",
+        "osm_surface_class",
+        "pred_label",
+        "surface",
+        "highway",
+    ]
+    geometry_mode = "line"
+    frame = load_roads(
+        project_root,
+        iso3,
+        country,
+        geometry_mode=geometry_mode,
         skip_features=skip_features,
         max_features=chunk_size,
-        bbox=bbox,
+        columns=columns,
+        road_backend=road_backend,
+        postgis_dsn=postgis_dsn,
+        postgis_table=postgis_table,
     )
+    # Keep orientation inputs when requested.
+    if include_orientation and road_backend == "gpkg":
+        # Existing GPKG path keeps orientation via SQL in old implementation.
+        # Fallback: approximate from geometry endpoints below if columns absent.
+        pass
     if frame.crs is None:
         frame = frame.set_crs("EPSG:4326")
     return frame.to_crs("EPSG:4326")
@@ -312,6 +348,59 @@ def _road_orientation_vectors(frame: gpd.GeoDataFrame) -> tuple[np.ndarray, np.n
 
 def _valid_probe_point_mask(geoms: gpd.GeoSeries) -> np.ndarray:
     return np.asarray([geom is not None and not geom.is_empty for geom in geoms], dtype=bool)
+
+
+def _source_for_factor(factor: str) -> str:
+    if factor.startswith("era5_") or factor in {
+        "soil_moisture_weekly_raw",
+        "pavement_surface_temperature_weekly_max_c",
+        "unpaved_erosion_rainfall_weekly_local_percentile",
+        "soil_moisture_weekly_local_percentile",
+    }:
+        return "era5"
+    if factor.startswith("flood"):
+        return "flood"
+    if factor.startswith("visibility"):
+        return "visibility"
+    return "road"
+
+
+def _cell_keys(
+    probe_points_wgs84: gpd.GeoSeries,
+    *,
+    cell_m: float,
+) -> np.ndarray:
+    if cell_m <= 0 or probe_points_wgs84.empty:
+        return np.arange(len(probe_points_wgs84), dtype="int64").astype(str)
+    points = probe_points_wgs84.to_crs("EPSG:3857")
+    xs = np.asarray([geom.x if geom and not geom.is_empty else np.nan for geom in points], dtype="float64")
+    ys = np.asarray([geom.y if geom and not geom.is_empty else np.nan for geom in points], dtype="float64")
+    ix = np.floor(xs / float(cell_m)).astype("float64")
+    iy = np.floor(ys / float(cell_m)).astype("float64")
+    return (pd.Series(ix).astype("Int64").astype(str) + ":" + pd.Series(iy).astype("Int64").astype(str)).to_numpy(dtype=str)
+
+
+def _unique_cell_values(
+    values: np.ndarray,
+    cell_keys: np.ndarray,
+    *,
+    mask: np.ndarray | None,
+    seen: set[str],
+) -> np.ndarray:
+    finite_values = np.asarray(values, dtype="float64")
+    keep = np.isfinite(finite_values)
+    if mask is not None:
+        keep &= np.asarray(mask, dtype=bool)
+    if not keep.any():
+        return np.asarray([], dtype="float64")
+    keys = np.asarray(cell_keys, dtype=str)
+    selected_values: list[float] = []
+    for key, value in zip(keys[keep], finite_values[keep], strict=False):
+        if key in seen:
+            continue
+        seen.add(str(key))
+        selected_values.append(float(value))
+    return np.asarray(selected_values, dtype="float64")
 
 
 def _has_visibility_station_files(raw_root: Path, iso3: str, *, start_date: date, end_date: date) -> bool:
@@ -367,11 +456,9 @@ def _memory_snapshot() -> str:
     return " | ".join(parts) if parts else "memory=n/a"
 
 
-def _open_db(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(path)
-    conn.execute("PRAGMA temp_store=FILE")
-    conn.execute("PRAGMA cache_size=-65536")
-    conn.execute("PRAGMA mmap_size=0")
+def _open_db(path: Path) -> duckdb.DuckDBPyConnection:
+    conn = duckdb.connect(str(path))
+    conn.execute("PRAGMA threads=4")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS counts (
@@ -387,7 +474,7 @@ def _open_db(path: Path) -> sqlite3.Connection:
 
 
 def _update_counts(
-    conn: sqlite3.Connection,
+    conn: duckdb.DuckDBPyConnection,
     metric_key: str,
     week_start: str,
     values: np.ndarray,
@@ -411,12 +498,11 @@ def _update_counts(
     )
 
 
-def _query_counts(conn: sqlite3.Connection, metric_key: str, week_start: str) -> pd.DataFrame:
-    return pd.read_sql_query(
+def _query_counts(conn: duckdb.DuckDBPyConnection, metric_key: str, week_start: str) -> pd.DataFrame:
+    return conn.execute(
         "SELECT value, count FROM counts WHERE metric_key = ? AND week_start = ? ORDER BY value",
-        conn,
-        params=(metric_key, week_start),
-    )
+        [metric_key, week_start],
+    ).df()
 
 
 def _weighted_stats(frame: pd.DataFrame) -> dict[str, float | int | None]:
@@ -467,6 +553,8 @@ def _plot_rule(
     rule: Rule,
     scenario: str,
     out_path: Path,
+    *,
+    aggregation_unit: str,
 ) -> None:
     bxp_stats = []
     for week_start, stats in zip(weeks, weekly_stats, strict=False):
@@ -488,7 +576,7 @@ def _plot_rule(
     if bxp_stats:
         ax.bxp(bxp_stats, showfliers=False)
     else:
-        ax.text(0.5, 0.5, "No finite road values", transform=ax.transAxes, ha="center", va="center")
+        ax.text(0.5, 0.5, f"No finite {aggregation_unit} values", transform=ax.transAxes, ha="center", va="center")
     for level in THRESHOLD_LEVELS:
         value = rule.thresholds.get(level, math.nan)
         if not np.isfinite(value):
@@ -497,7 +585,7 @@ def _plot_rule(
         ax.axhline(value, color=color, linestyle=linestyle, linewidth=1.4, label=f"{_threshold_label(level)}: {value:g}")
     ax.set_title(f"{_pretty_scenario_name(scenario)} | {rule.surface_scope} | {_pretty_factor_name(rule.factor)}")
     ax.set_xlabel("Week start")
-    ax.set_ylabel("Factor value on road section")
+    ax.set_ylabel(f"Factor value per {aggregation_unit}")
     ax.grid(alpha=0.22)
     handles, labels = ax.get_legend_handles_labels()
     if handles:
@@ -527,17 +615,41 @@ def main() -> None:
     _log_stage(f"Loading threshold rules: {args.thresholds_yaml}")
     rules = _load_rules(args.thresholds_yaml)
     scenarios = _scenario_names(args.scenario)
-    base_factors = _base_factor_dependencies(rules)
-    requires_orientation = "era5_crosswind_10m_weekly_max_m_s" in base_factors
     if not rules:
         raise RuntimeError(f"No threshold rules loaded from {args.thresholds_yaml}")
 
     raw_root = project_root / "data" / "raw"
     datasets_cfg = dict(config.get("datasets", {}))
+    flood_cfg = dict(datasets_cfg.get("flood", {}) or {})
+    flood_enabled = bool(flood_cfg.get("enabled", True))
+    if not flood_enabled:
+        before = len(rules)
+        rules = [rule for rule in rules if _source_for_factor(rule.factor) != "flood"]
+        dropped = before - len(rules)
+        if dropped:
+            _log_stage(f"Dropped {dropped} flood rules because datasets.flood.enabled=false")
+
+    base_factors = _base_factor_dependencies(rules)
+    requires_orientation = "era5_crosswind_10m_weekly_max_m_s" in base_factors
+    needs_flood = flood_enabled and any(_source_for_factor(factor) == "flood" for factor in base_factors)
+    source_cell_m = {
+        "era5": float(args.era5_cell_m),
+        "visibility": float(args.visibility_cell_m),
+        "road": 0.0,
+    }
+    if needs_flood:
+        source_cell_m["flood"] = float(args.flood_cell_m)
     road_path = raw_root / "road_surface" / iso3 / f"heigit_{iso3.lower()}_roadsurface_lines.gpkg"
-    _log_stage(f"Inspecting road layer: {road_path}")
-    layer_name = str(pyogrio.list_layers(road_path)[0][0])
-    total_features = int(pyogrio.read_info(road_path)["features"])
+    if args.road_backend == "gpkg":
+        _log_stage(f"Inspecting road layer: {road_path}")
+        total_features = int(pyogrio.read_info(road_path)["features"])
+    else:
+        _log_stage(f"Inspecting road layer: postgis table={args.postgis_table or f'road_surface_{iso3.lower()}'}")
+        total_features = count_roads_postgis(
+            bbox=study_bbox if study_bbox is not None else tuple(country_layer(project_root, iso3).total_bounds),
+            dsn=args.postgis_dsn,
+            table=args.postgis_table or f"road_surface_{iso3.lower()}",
+        )
     n_chunks = max(1, math.ceil(total_features / args.chunk_size))
     if args.max_chunks is not None:
         n_chunks = min(n_chunks, max(0, int(args.max_chunks)))
@@ -550,7 +662,7 @@ def main() -> None:
     if not out_dir.is_absolute():
         out_dir = project_root / out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    db_path = out_dir / "value_counts.sqlite"
+    db_path = out_dir / "value_counts.duckdb"
     if db_path.exists():
         db_path.unlink()
     conn = _open_db(db_path)
@@ -565,22 +677,38 @@ def main() -> None:
     if study_bbox is not None:
         print(f"BBox: {list(study_bbox)}", flush=True)
     print(f"Scenarios: {', '.join(scenarios)}", flush=True)
-    print(f"Rules: {len(rules)} | Weeks: {len(weeks)} | Chunk size: {args.chunk_size:,} | Road chunks: {n_chunks:,}", flush=True)
-    print(f"Road layer: {road_path.name} | Features: {total_features:,}", flush=True)
+    print(
+        f"Rules: {len(rules)} | Weeks: {len(weeks)} | Chunk size: {args.chunk_size:,} | "
+        f"Road chunks: {n_chunks:,} | Aggregation: {args.aggregation_unit}",
+        flush=True,
+    )
+    if args.aggregation_unit == "cell":
+        print(
+            "Cell sizes: "
+            + ", ".join(f"{source}={cell_m:g}m" for source, cell_m in source_cell_m.items() if source != "road"),
+            flush=True,
+        )
+    road_label = road_path.name if args.road_backend == "gpkg" else (args.postgis_table or f"road_surface_{iso3.lower()}")
+    print(f"Road layer: {road_label} | Features: {total_features:,}", flush=True)
     if era5_paths:
         print(f"ERA5 source files: {len(era5_paths)}", flush=True)
     else:
         print("ERA5 source files: 0", flush=True)
-    _log_stage("Resolving flood rasters by week...")
-    flood_paths_by_week = overlay._flood_paths_by_week_start(
-        project_root,
-        raw_root,
-        weeks,
-        progress_label="Flood week mapping",
-    )
-    _log_stage(f"Flood weeks with data: {sum(1 for paths in flood_paths_by_week.values() if paths)} / {len(weeks)}")
+    flood_paths_by_week: dict[date, list[Path]] = {week: [] for week in weeks}
+    if needs_flood:
+        _log_stage("Resolving flood rasters by week...")
+        flood_paths_by_week = overlay._flood_paths_by_week_start(
+            project_root,
+            raw_root,
+            weeks,
+            bbox=study_bbox,
+            progress_label="Flood week mapping",
+        )
+        _log_stage(f"Flood weeks with data: {sum(1 for paths in flood_paths_by_week.values() if paths)} / {len(weeks)}")
+    else:
+        _log_stage("Skipping flood raster mapping (flood disabled or no flood rules).")
     print("Starting chunked aggregation...", flush=True)
-    if "flood_weekly" in base_factors and not any(flood_paths_by_week.values()):
+    if needs_flood and "flood_weekly" in base_factors and not any(flood_paths_by_week.values()):
         missing_metrics.setdefault("flood_weekly", "missing_flood_weekly_catalog_mapping_or_files")
     if "visibility_weekly_min_m" in base_factors:
         if not _has_visibility_station_files(
@@ -598,18 +726,32 @@ def main() -> None:
         ):
             missing_metrics.setdefault("visibility_weekly_min_m", "no_usable_visibility_values")
 
+    seen_cells: dict[tuple[str, str, str, str], set[str]] = {}
+    era5_dataset_cache: dict[tuple[str, ...], object] = {}
+
+    def _cached_week_era5_dataset(paths: list[Path]):
+        key = tuple(str(path) for path in paths)
+        ds = era5_dataset_cache.get(key)
+        if ds is None:
+            ds = overlay._open_era5_dataset(paths)
+            era5_dataset_cache[key] = ds
+        return ds
+
     chunk_bar = tqdm(range(n_chunks), desc="Road chunks", unit="chunk")
     for chunk_idx in chunk_bar:
             skip = chunk_idx * args.chunk_size
             _log_stage(f"[chunk {chunk_idx + 1}/{n_chunks}] start | {_memory_snapshot()}")
             _log_stage(f"Reading road chunk {chunk_idx + 1}/{n_chunks} (skip={skip:,}, max={args.chunk_size:,})...")
             roads = _road_chunk(
-                road_path,
-                layer_name,
+                project_root,
+                iso3,
+                country_layer(project_root, iso3),
                 skip_features=skip,
                 chunk_size=args.chunk_size,
                 include_orientation=requires_orientation,
-                bbox=study_bbox,
+                road_backend=args.road_backend,
+                postgis_dsn=args.postgis_dsn,
+                postgis_table=args.postgis_table,
             )
             if roads.empty:
                 _log_stage(f"Chunk {chunk_idx + 1}/{n_chunks}: no roads loaded.")
@@ -628,10 +770,15 @@ def main() -> None:
             if roads.empty:
                 continue
             roads["surface_group"] = road_surface_class(roads)
-            probe_points = gpd.GeoSeries(roads.geometry, crs="EPSG:4326")
+            probe_points = gpd.GeoSeries(roads.geometry.apply(geometry_probe_point), crs="EPSG:4326")
             lons = np.asarray([geom.x for geom in probe_points], dtype="float64")
             lats = np.asarray([geom.y for geom in probe_points], dtype="float64")
             road_ux, road_uy = _road_orientation_vectors(roads)
+            cell_keys_by_source: dict[str, np.ndarray] = {}
+            if args.aggregation_unit == "cell":
+                for source, cell_m in source_cell_m.items():
+                    if source != "road":
+                        cell_keys_by_source[source] = _cell_keys(probe_points, cell_m=cell_m)
             mask_keys = {(scenario, rule.surface_scope) for scenario in scenarios for rule in rules}
             masks = {
                 key: _surface_mask(roads["surface_group"], key[0], key[1])
@@ -639,7 +786,7 @@ def main() -> None:
             }
 
             task_bar = tqdm(weeks, desc=f"Chunk {chunk_idx + 1}/{n_chunks} weeks", unit="week", leave=False)
-            for week_start in task_bar:
+            for week_idx, week_start in enumerate(task_bar, start=1):
                 week_start_str = week_start.isoformat()
                 week_end = _week_end(week_start, end_date, step_days)
                 task_bar.set_postfix_str(week_start_str)
@@ -650,6 +797,7 @@ def main() -> None:
                     factor in base_factors
                     for factor in {
                         "era5_tp_1h_max_weekly_mm_per_h",
+                        "era5_tp_daily_sum_weekly_max_mm",
                         "soil_moisture_weekly_raw",
                         "pavement_surface_temperature_weekly_max_c",
                         "era5_crosswind_10m_weekly_max_m_s",
@@ -664,13 +812,25 @@ def main() -> None:
                         if not week_era5_paths:
                             missing_metrics.setdefault("era5", f"missing_era5_month_for_{week_start_str}")
                         else:
-                            ds_era5_week = overlay._open_era5_dataset(week_era5_paths)
+                            ds_era5_week = _cached_week_era5_dataset(week_era5_paths)
 
                 if "era5_tp_1h_max_weekly_mm_per_h" in base_factors:
                     if ds_era5_week is None:
                         missing_metrics.setdefault("era5_tp_1h_max_weekly_mm_per_h", "missing_era5_inputs")
                     else:
                         computed["era5_tp_1h_max_weekly_mm_per_h"] = overlay._sample_era5_tp_1h_max_mm_per_h(
+                            ds_era5_week,
+                            lons,
+                            lats,
+                            start_date=week_start,
+                            end_date=week_end,
+                        )
+
+                if "era5_tp_daily_sum_weekly_max_mm" in base_factors:
+                    if ds_era5_week is None:
+                        missing_metrics.setdefault("era5_tp_daily_sum_weekly_max_mm", "missing_era5_inputs")
+                    else:
+                        computed["era5_tp_daily_sum_weekly_max_mm"] = overlay._sample_era5_tp_daily_sum_weekly_max_mm(
                             ds_era5_week,
                             lons,
                             lats,
@@ -746,19 +906,43 @@ def main() -> None:
 
                 for base_factor, values in computed.items():
                     scopes = {rule.surface_scope for rule in rules}
+                    source = _source_for_factor(base_factor)
                     for scenario in scenarios:
                         metric_key = f"raw::{base_factor}::{scenario}::all"
-                        _update_counts(conn, metric_key, week_start_str, values, decimals=args.value_round_decimals)
+                        if args.aggregation_unit == "cell" and source in cell_keys_by_source:
+                            seen_key = (source, scenario, "all", week_start_str)
+                            selected = _unique_cell_values(
+                                values,
+                                cell_keys_by_source[source],
+                                mask=None,
+                                seen=seen_cells.setdefault(seen_key, set()),
+                            )
+                            _update_counts(conn, metric_key, week_start_str, selected, decimals=args.value_round_decimals)
+                        else:
+                            _update_counts(conn, metric_key, week_start_str, values, decimals=args.value_round_decimals)
                         for scope in scopes:
                             mask = masks[(scenario, scope)]
                             metric_key = f"raw::{base_factor}::{scenario}::{scope}"
-                            _update_counts(conn, metric_key, week_start_str, values[mask], decimals=args.value_round_decimals)
+                            if args.aggregation_unit == "cell" and source in cell_keys_by_source:
+                                seen_key = (source, scenario, scope, week_start_str)
+                                selected = _unique_cell_values(
+                                    values,
+                                    cell_keys_by_source[source],
+                                    mask=mask,
+                                    seen=seen_cells.setdefault(seen_key, set()),
+                                )
+                                _update_counts(conn, metric_key, week_start_str, selected, decimals=args.value_round_decimals)
+                            else:
+                                _update_counts(conn, metric_key, week_start_str, values[mask], decimals=args.value_round_decimals)
                 computed.clear()
-                if ds_era5_week is not None:
-                    ds_era5_week.close()
-                gc.collect()
-                conn.commit()
-            del roads, probe_points, lons, lats, road_ux, road_uy, masks
+                if week_idx % 8 == 0:
+                    gc.collect()
+                    conn.commit()
+            del roads, probe_points, lons, lats, road_ux, road_uy, masks, cell_keys_by_source
+            conn.commit()
+            for cached in era5_dataset_cache.values():
+                cached.close()
+            era5_dataset_cache.clear()
             gc.collect()
             _log_stage(f"[chunk {chunk_idx + 1}/{n_chunks}] done | {_memory_snapshot()}")
 
@@ -793,7 +977,14 @@ def main() -> None:
                     row[f"{level}_threshold"] = rule.thresholds.get(level, math.nan)
                 weekly_stats.append(row)
                 diagnostics_rows.append(row)
-            _plot_rule(week_tokens, weekly_stats, rule, scenario, png_dir / f"{scenario}__{rule.key}.png")
+            _plot_rule(
+                week_tokens,
+                weekly_stats,
+                rule,
+                scenario,
+                png_dir / f"{scenario}__{rule.key}.png",
+                aggregation_unit=args.aggregation_unit,
+            )
 
     diagnostics = pd.DataFrame(diagnostics_rows)
     diagnostics_path = out_dir / "weekly_factor_value_diagnostics.csv"
@@ -807,10 +998,12 @@ def main() -> None:
         },
         "bbox": list(study_bbox) if study_bbox is not None else None,
         "chunk_size": args.chunk_size,
+        "aggregation_unit": args.aggregation_unit,
+        "source_cell_m": source_cell_m if args.aggregation_unit == "cell" else None,
         "scenarios": scenarios,
         "n_rules": len(rules),
         "n_weeks": len(weeks),
-        "value_counts_sqlite": _relpath(db_path, project_root),
+        "value_counts_duckdb": _relpath(db_path, project_root),
         "diagnostics_csv": _relpath(diagnostics_path, project_root),
         "png_dir": _relpath(png_dir, project_root),
         "missing_metrics": missing_metrics,

@@ -1,14 +1,45 @@
-# Equatorial Working Rules
+# Equatorial Agent Guide
 
-This subproject inherits the root repository rules:
+## Scope
+This project is now focused on a single production path:
+1. Full-year 2024 fetch for the 700km country list.
+2. ERA5 precipitation-only road overlay.
+3. Weekly factor boxplots (cell aggregation).
 
-- Follow `/Users/gk/Code/super-duper-disser/AGENTS.md` first.
-- If local instructions here conflict with the root rules, prefer the stricter verification habit unless the user explicitly says otherwise.
+Anything outside this path is legacy and should not be reintroduced without explicit request.
 
-## Local Notes
+## Canonical Entrypoints
+- Fetch: `scripts/fetch_equator_700km_full_year_data.sh`
+- Overlay + boxplots batch launcher:
+  - `scripts/run_era5_only_overlay_then_boxplots_all.zsh`
+- Core modules:
+  - `src/data/fetch.py`
+  - `src/data/run_multisource_road_overlay.py`
+  - `src/data/run_weekly_factor_boxplots_streaming.py`
 
-- Treat `equatorial` outputs as data products, not just script side effects: after important runs, inspect the written CSV/JSON summaries and PNG previews directly.
-- For Pandana workflows, use the root Pandana environment when needed:
-  - `/Users/gk/Code/super-duper-disser/.venv-pandana`
-- Keep threshold/accessibility results reproducible by recording the exact config, origin set, output directory, and period used for each run.
-- When reporting numerical results from generated summaries, round user-facing values to one decimal place unless higher precision is specifically requested.
+## Required Runtime
+- Use project venv only: `equatorial/.venv/bin/python`
+- Run from any directory via absolute script paths when possible.
+
+## Data/Output Conventions
+- Overlay output:
+  - `outputs/road_multisource_overlay/<ISO3>/2024-01-01_to_2024-12-31_7d/`
+- Boxplots output:
+  - `outputs/road_weekly_scenarios/<ISO3>/2024_full_year_<RUN_ID>/factor_boxplots_cell/`
+- Generated run configs:
+  - `config/generated/<RUN_ID>_tmp/`
+
+## Logging Rules
+- Prefer compact weekly progress logs.
+- Avoid verbose per-factor spam unless debugging.
+- Treat warnings/errors as actionable; do not ignore silently.
+
+## Cleanup Policy
+- Keep only artifacts relevant to listed countries and current run objective.
+- Move stale experiments/legacy runs to Trash, not permanent delete.
+- Do not keep duplicate launchers/workflows for the same purpose.
+
+## Change Discipline
+- Keep pipeline code short and direct.
+- Avoid parallel alternative implementations.
+- If adding options, default behavior must stay production-safe and deterministic.

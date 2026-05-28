@@ -1,0 +1,169 @@
+road_climate_damage:
+  version: 0.1
+  status: planning_only
+  note: 'This file stores the current mock configuration for a future road-climate
+    damage overlay. It is a configuration contract only for now and does not change
+    the current routing code by itself.
+
+    '
+  road_selection:
+    include_surface_groups:
+    - unpaved
+    - unknown
+    notes:
+    - Only road segments with surface_group `unpaved` or `unknown` are in scope.
+    - For damage handling, `unknown` is treated the same as `unpaved` for now.
+    - Keep the original surface labels unchanged in the data outputs.
+  analysis_period:
+    start_date: '2024-01-01'
+    end_date: '2024-12-31'
+    aggregation_period_days: 7
+    aggregation_label: weekly
+  weekly_experiment_protocol:
+    period_locked: true
+    baseline:
+      compute_once: true
+      description: nearest destination by roads without external impacts
+    origins:
+      default_sampling: random_fixed_per_city
+      default_n_random_origins: 5
+      fixed_across_city_experiments: true
+    scenarios:
+    - unknown_as_paved
+    - unknown_as_unpaved
+    report_mode:
+      compare_side_by_side_without_delta: true
+    isolated_origin_access_minutes: 100000
+    graph_solver: pandana
+  implementation_scope:
+    strategy: add_one_indicator_at_a_time
+    active_indicators:
+    - flood_depth
+    deferred_indicators:
+    - landslide
+    - extreme_rainfall
+    - extreme_heat
+    - drought
+    - dust_storms
+    - windstorms
+    - urban_heat
+    note: 'First implementation pass should use only one indicator. Additional indicators
+      are intentionally deferred until the first one is stable.
+
+      '
+  severity_effects:
+    minor:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.05
+      closure_duration_days: 0
+      note: Road remains traversable; apply a 5 percent slowdown.
+    moderate:
+      effect_type: speed_penalty
+      speed_penalty_fraction: 0.15
+      closure_duration_days: 0
+      note: Road remains traversable; apply a 15 percent slowdown.
+    severe:
+      effect_type: temporary_closure
+      speed_penalty_fraction: 0.0
+      closure_duration_days: 7
+      note: Temporary road outage; default mock duration is 1 week.
+    catastrophic:
+      effect_type: permanent_closure
+      speed_penalty_fraction: 0.0
+      closure_duration_days: 90
+      note: Long outage; default mock duration is 3 months.
+  indicators:
+    landslide:
+      parameter: rainfall
+      units: mm_per_24h
+      source_layers:
+      - landslide_susceptibility
+      - chirps
+      - era5
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+    extreme_rainfall:
+      parameter: rainfall
+      units: mm_per_day
+      source_layers:
+      - chirps
+      - era5
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+    flood_depth:
+      status: active_first_pass
+      parameter: flood_depth
+      units: m
+      source_layers:
+      - flood
+      weekly_aggregation: weekly_7d_snapshot_step
+      thresholds:
+        minor: 0.1
+        moderate: 0.2
+        severe: 0.3
+        catastrophic: 0.5
+      notes:
+      - 0.3 m is the first mock closure threshold for small-vehicle impassability.
+      - 0.5 m is the first mock catastrophic threshold for road unusability.
+    extreme_heat:
+      status: deferred
+      parameter: skin_temperature
+      units: celsius
+      source_layers:
+      - era5
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+    drought:
+      status: deferred
+      parameter: spi
+      units: index
+      source_layers:
+      - era5_spi
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+    dust_storms:
+      status: deferred
+      parameter: pm10_or_pm25
+      units: ug_per_m3
+      source_layers:
+      - cams
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+    windstorms:
+      status: deferred
+      parameter: wind_speed
+      units: m_per_s
+      source_layers:
+      - era5
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null
+    urban_heat:
+      status: deferred
+      parameter: built_up_or_impervious_proxy
+      units: share_or_fraction
+      source_layers:
+      - worldcover
+      - era5
+      thresholds:
+        minor: null
+        moderate: null
+        severe: null
+        catastrophic: null

@@ -1,0 +1,159 @@
+# Data Inventory
+
+This report is generated from `data/metadata/catalog.csv`.
+
+## Downloaded Successfully
+- `cams` -> `data/raw/cams/cams-eac4-3hourly-angola-2024-09_to_2024-11.nc` | raw resolution: 0.75 degree global atmospheric composition grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.01.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.02.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.03.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.04.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.05.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.06.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.07.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.08.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.09.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.10.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.11.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.12.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.13.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.14.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.15.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.16.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.17.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.18.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.19.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.20.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.21.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.22.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.23.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.24.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.25.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.26.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.27.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.28.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.29.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.09.30.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.01.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.02.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.03.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.04.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.05.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.06.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.07.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.08.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.09.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.10.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.11.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.12.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.13.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.14.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.15.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.16.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.17.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.18.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.19.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.20.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.21.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.22.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.23.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.24.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.25.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.26.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.27.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.28.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.29.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.30.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.10.31.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.01.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.02.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.03.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.04.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.05.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.06.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.07.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.08.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.09.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.10.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.11.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.12.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.13.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.14.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.15.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.16.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.17.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.18.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.19.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.20.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.21.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.22.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.23.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.24.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.25.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.26.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.27.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.28.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.29.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `chirps` -> `data/raw/chirps/global/daily/sat/2024/chirps-v3.0.sat.2024.11.30.tif` | raw resolution: ~0.05 degree global precipitation grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-09-01.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-09-08.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-09-15.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-09-22.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-09-29.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-10-06.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-10-13.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-10-20.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-10-27.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-11-03.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-11-10.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-11-17.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `era5` -> `data/raw/era5/era5-land-hourly-angola-2024-11-24.nc` | raw resolution: 0.1 degree grid | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/251/ENSEMBLE_FLOOD_20240907T044413_VV_AF020M_E045N042T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/258/ENSEMBLE_FLOOD_20240914T043623_VV_AF020M_E048N042T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/265/ENSEMBLE_FLOOD_20240921T042814_VV_AF020M_E048N039T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/272/ENSEMBLE_FLOOD_20240928T042012_VV_AF020M_E051N039T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/278/ENSEMBLE_FLOOD_20241004T172158_VV_AF020M_E051N030T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/286/ENSEMBLE_FLOOD_20241012T040401_VV_AF020M_E054N039T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/293/ENSEMBLE_FLOOD_20241019T035618_VV_AF020M_E057N036T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/299/ENSEMBLE_FLOOD_20241025T044414_VV_AF020M_E045N042T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/306/ENSEMBLE_FLOOD_20241101T043534_VV_AF020M_E048N042T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/314/ENSEMBLE_FLOOD_20241109T172158_VV_AF020M_E051N030T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/321/ENSEMBLE_FLOOD_20241116T045957_VV_AF020M_E042N045T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/328/ENSEMBLE_FLOOD_20241123T045229_VV_AF020M_E042N045T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flood` -> `data/raw/flood/copernicus_gfm/GFM/2024/335/ENSEMBLE_FLOOD_20241130T044413_VV_AF020M_E045N042T3.tif` | raw resolution: 20 m Sentinel-1 SAR flood extent (GFM ensemble) | detected resolution: n/a | CRS: n/a
+- `flopros` -> `data/raw/flopros/global/flopros_parameter_scale_note.csv` | raw resolution: Parameter note file | detected resolution: n/a | CRS: n/a
+- `flopros` -> `data/raw/flopros/global/nhess-16-1049-2016-supplement.zip` | raw resolution: Official FLOPROS supplement archive | detected resolution: n/a | CRS: n/a
+- `flopros` -> `data/raw/flopros/global/original/Scussolini_etal_Suppl_info/FLOPROS_Database_Design_&_Policy_layers_V1.xlsx` | raw resolution: Design and policy layers workbook from official FLOPROS supplement | detected resolution: n/a | CRS: n/a
+- `flopros` -> `data/raw/flopros/global/original/Scussolini_etal_Suppl_info/FLOPROS_shp_V1/FLOPROS_shp_V1.shp` | raw resolution: Protection-standard polygons and attributes from official FLOPROS supplement shapefile | detected resolution: n/a | CRS: n/a
+- `gadm` -> `data/raw/gadm/AGO/gadm41_AGO.gpkg` | raw resolution: vector administrative boundaries | detected resolution: n/a | CRS: n/a
+- `gem` -> `data/raw/gem/global/v2023_1_pga_475_rock_3min.tif` | raw resolution: global seismic hazard raster interpolated from hazard values calculated at about ~6 km point spacing | detected resolution: n/a | CRS: n/a
+- `landslide_susceptibility` -> `data/raw/landslide_susceptibility/global/nasa_landslide_susceptibility_angola.tif` | raw resolution: NASA global landslide susceptibility map clip; exported at requested 30 arc-second grid | detected resolution: n/a | CRS: n/a
+- `liquefaction` -> `data/raw/liquefaction/global/liquefaction_v1_deg.tif` | raw resolution: global raster in EPSG:4326; susceptibility classes 0-5 from the Zhu model family | detected resolution: n/a | CRS: n/a
+- `road_surface` -> `data/raw/road_surface/AGO/heigit_ago_roadsurface_lines.gpkg` | raw resolution: vector road segments with binary paved/unpaved attribution (country releases) | detected resolution: n/a | CRS: n/a
+- `visibility_noaa_isd` -> `data/raw/visibility_noaa_isd/AGO/stations.csv` | raw resolution: station metadata | detected resolution: n/a | CRS: n/a
+
+## Manual Steps Required
+- `visibility_noaa_isd` -> `data/metadata/manual_steps/visibility_noaa_isd_no_vis_values.md` | note: No usable VIS values detected in downloaded station files.
+
+## Failed
+- None.
+
+## Recommended Replacements
+- `gadm`: Recommended replacement for legacy admin boundary layers: current GADM 4.1 country GeoPackages.
+- `osm`: Legacy placeholder only; not the active road-surface source in the current equatorial setup.
+- `road_surface`: Recommended paved/unpaved road-surface source: HeiGIT global road-surface dataset on HDX (Mapillary + OSM matching).
+- `chirps`: Recommended replacement for historical precipitation forcing: CHIRPS v3 precipitation rasters.
+- `era5`: Recommended replacement for older climate reanalysis inputs: ERA5-Land or ERA5 via the Copernicus CDS API.
+- `era5_spi`: Recommended ready-made drought indicator for SPI-based thresholds: Drought.gov / NOAA NIDIS global ERA5 SPI GeoTIFFs.
+- `landslide_susceptibility`: Recommended first-pass rainfall-triggered landslide susceptibility context: NASA global landslide susceptibility map.
+- `flood`: Recommended dynamic flood source: Copernicus GFM observed flood extent (Sentinel-1 SAR, via STAC).
+- `flood_depth`: Manual/modelled water-depth input in meters for flood-depth road fragility; flood extent is not a substitute.
+- `coastaldem`: Recommended coastal screening elevation source when access is granted: CoastalDEM.
+- `soilgrids`: Recommended replacement for coarse soil covariates: SoilGrids 250 m layers.
+- `ibtracs`: Recommended tropical cyclone track archive: NOAA IBTrACS v04r01.
+- `cams`: Recommended atmospheric composition source for PM, dust, and aerosol context: CAMS global reanalysis.
+- `visibility_noaa_isd`: Recommended first-pass observed visibility source: NOAA/NCEI Global Hourly station VIS observations.
+- `gem`: Recommended operational global seismic hazard source in this project: GEM open seismic hazard raster from Zenodo.
+- `liquefaction`: Recommended global liquefaction susceptibility source: Zhu model family raster from Zenodo.
+- `flopros`: FLOPROS is a protection-standard parameter dataset, not a raster hazard layer.
+- `worldcover`: Recommended high-resolution land-cover source for built-up / impervious proxy context: ESA WorldCover 10 m.

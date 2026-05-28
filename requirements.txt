@@ -1,5 +1,6 @@
 cdsapi
 geopandas
+gcsfs
 httpx
 jupyter
 matplotlib
@@ -12,3 +13,4 @@ pyyaml
 rasterio
 shapely
 xarray
+zarr
