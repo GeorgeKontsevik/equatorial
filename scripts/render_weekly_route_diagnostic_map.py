@@ -34,12 +34,44 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
+def short_graph_tag(graph_prefix: str) -> str:
+    if graph_prefix == "road_graph":
+        return "rg"
+    if graph_prefix == "component_connected":
+        return "cc"
+    if graph_prefix == "cluster_connected":
+        return "clc"
+    return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in graph_prefix)[:12]
+
+
+def infer_limits_from_scope(origin_scope: str) -> tuple[int, int, int, int]:
+    import re
+
+    m = re.search(r"_(\d+)small_(\d+)large_(\d+)ports(?:_(\d+)airports)?$", origin_scope)
+    if not m:
+        raise ValueError(f"Cannot infer destination limits from origin_scope={origin_scope!r}")
+    small, large, ports, airports = m.groups()
+    return int(small), int(large), int(ports), int(airports or 0)
+
+
+def od_table_name(iso: str, graph_prefix: str, origin_scope: str) -> str:
+    small, large, ports, airports = infer_limits_from_scope(origin_scope)
+    limit_tag = f"{small}s_{large}l_{ports}p"
+    if airports > 0:
+        limit_tag += f"_{airports}a"
+    table = f"crop_access_astar_od_{short_graph_tag(graph_prefix)}_{iso.lower()}_{limit_tag}"
+    if "allclusters" in origin_scope:
+        table += "_allclusters"
+    return table
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render diagnostic route map for crop-cluster OD paths in the max-delay week.")
     parser.add_argument("--db-url", default=DEFAULT_DB_URL)
     parser.add_argument("--country", default="ECU")
     parser.add_argument("--scenario", default=SCENARIO)
     parser.add_argument("--origin-scope", default=ORIGIN_SCOPE)
+    parser.add_argument("--week-start", default=None, help="Optional YYYY-MM-DD week to render; defaults to the country's max-delay week.")
     parser.add_argument("--out-dir", default=str(ROOT / "outputs" / "astar_accessibility_weekly" / "route_diagnostics"))
     parser.add_argument("--rain-min-mm", type=float, default=50.0)
     return parser.parse_args()
@@ -80,6 +112,58 @@ def fetch_max_case(conn: psycopg.Connection, iso: str, scenario: str, origin_sco
         row = cur.fetchone()
     if row is None:
         raise RuntimeError(f"No completed rows for {iso} {scenario} {origin_scope}")
+    return dict(row)
+
+
+def fetch_max_case_for_week(
+    conn: psycopg.Connection,
+    iso: str,
+    week_start: str,
+    scenario: str,
+    origin_scope: str,
+) -> dict[str, object]:
+    with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+        cur.execute(
+            """
+            WITH base AS (
+                SELECT
+                    country_code, week_start, crop_code, candidate_rank, dest_type, dest_rank,
+                    dest_id, dest_name, origin_node, dest_node, travel_time_h,
+                    concat_ws('|', country_code, crop_code, candidate_rank, dest_type, dest_rank, dest_id) AS od_key
+                FROM eq.crop_accessibility_weekly_astar
+                WHERE country_code = %s
+                  AND week_start = %s::date
+                  AND scenario = %s
+                  AND origin_scope = %s
+                  AND route_status = 'ok'
+                  AND travel_time_h IS NOT NULL
+            ),
+            baseline AS (
+                SELECT
+                    concat_ws('|', country_code, crop_code, candidate_rank, dest_type, dest_rank, dest_id) AS od_key,
+                    min(travel_time_h) AS baseline_h
+                FROM eq.crop_accessibility_weekly_astar
+                WHERE country_code = %s
+                  AND scenario = %s
+                  AND origin_scope = %s
+                  AND route_status = 'ok'
+                  AND travel_time_h IS NOT NULL
+                GROUP BY 1
+            )
+            SELECT
+                b.*,
+                bl.baseline_h,
+                (b.travel_time_h - bl.baseline_h) * 60.0 AS delta_minutes
+            FROM base b
+            JOIN baseline bl USING (od_key)
+            ORDER BY delta_minutes DESC NULLS LAST
+            LIMIT 1
+            """,
+            (iso, week_start, scenario, origin_scope, iso, scenario, origin_scope),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise RuntimeError(f"No completed rows for {iso} week={week_start} {scenario} {origin_scope}")
     return dict(row)
 
 
@@ -130,7 +214,7 @@ def fetch_week_stats(conn: psycopg.Connection, iso: str, week_start: str, scenar
 def create_route_tables(conn: psycopg.Connection, iso: str, week_start: str, scenario: str, origin_scope: str) -> None:
     suffix = iso.lower()
     edge_table = f"road_graph_edges_pgr_{suffix}_bridge_astar_base"
-    od_table = f"crop_accessibility_astar_od_{suffix}"
+    od_table = od_table_name(iso, "cluster_connected", origin_scope)
     edge_sql = f"""
         SELECT e.id, e.source, e.target,
                e.base_cost / GREATEST(
@@ -257,13 +341,14 @@ def fetch_origins(conn: psycopg.Connection, iso: str, week_start: str, scenario:
     )
 
 
-def fetch_destinations(conn: psycopg.Connection, iso: str) -> pd.DataFrame:
+def fetch_destinations(conn: psycopg.Connection, iso: str, graph_prefix: str, origin_scope: str) -> pd.DataFrame:
     suffix = iso.lower()
+    od_table = od_table_name(iso, graph_prefix, origin_scope)
     return pd.read_sql_query(
         f"""
         SELECT DISTINCT od.dest_type, od.dest_rank, od.dest_id, od.dest_name, od.population,
                n.lon, n.lat, od.dest_node
-        FROM eq.{qident(f"crop_accessibility_astar_od_{suffix}")} od
+        FROM eq.{qident(od_table)} od
         JOIN eq.{qident(f"road_graph_nodes_{suffix}")} n ON n.node_id = od.dest_node
         WHERE od.country_code = %(iso)s
         ORDER BY od.dest_type, od.dest_rank, od.dest_name
@@ -502,8 +587,12 @@ def main() -> None:
     iso = args.country.strip().upper()
     out_dir = Path(args.out_dir)
     with psycopg.connect(args.db_url) as conn:
-        max_case = fetch_max_case(conn, iso, args.scenario, args.origin_scope)
-        week_start = str(max_case["week_start"])
+        if args.week_start:
+            week_start = str(args.week_start)
+            max_case = fetch_max_case_for_week(conn, iso, week_start, args.scenario, args.origin_scope)
+        else:
+            max_case = fetch_max_case(conn, iso, args.scenario, args.origin_scope)
+            week_start = str(max_case["week_start"])
         log(f"[case] {iso} week={week_start} max_delta={float(max_case['delta_minutes']):.1f} min")
         week_stats = fetch_week_stats(conn, iso, week_start, args.scenario, args.origin_scope)
         log(f"[routes] building pgr_aStar routes for all OD pairs")
@@ -511,7 +600,7 @@ def main() -> None:
         route_usage = fetch_route_usage(conn)
         max_route = fetch_max_route_usage(conn, max_case)
         origins = fetch_origins(conn, iso, week_start, args.scenario, args.origin_scope)
-        destinations = fetch_destinations(conn, iso)
+        destinations = fetch_destinations(conn, iso, "cluster_connected", args.origin_scope)
         rain = fetch_rain(conn, iso, week_start, args.rain_min_mm)
         item = render_map(
             iso,
