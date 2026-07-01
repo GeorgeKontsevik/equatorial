@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import geopandas as gpd
@@ -60,6 +61,19 @@ LABEL_OFFSETS = {
 }
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Render equatorial 700 km belt country input-status map.")
+    parser.add_argument("--out", type=Path, default=OUT)
+    parser.add_argument("--xmin", type=float, default=-180.0)
+    parser.add_argument("--xmax", type=float, default=180.0)
+    parser.add_argument("--ymin", type=float, default=-28.0)
+    parser.add_argument("--ymax", type=float, default=28.0)
+    parser.add_argument("--fig-width", type=float, default=20.0)
+    parser.add_argument("--fig-height", type=float, default=4.2)
+    parser.add_argument("--aspect", default=None, choices=["auto", "equal"], help="Optional matplotlib axis aspect override.")
+    return parser.parse_args()
+
+
 def load_country_configs() -> dict[str, str]:
     countries: dict[str, str] = {}
     for path in sorted(CFG_DIR.glob("*_datasets_2024_full_year.yaml")):
@@ -95,10 +109,11 @@ def label_point(row, iso: str) -> tuple[float, float]:
 
 
 def main() -> None:
+    args = parse_args()
     countries = load_country_configs()
     missing = {iso for iso in countries if not has_road_surface(iso)}
     world = gpd.read_file(NATURAL_EARTH).to_crs("EPSG:4326")
-    world_clip = gpd.clip(world, box(-180, -28, 180, 28))
+    world_clip = gpd.clip(world, box(args.xmin, args.ymin, args.xmax, args.ymax))
 
     selected_rows = []
     for iso in countries:
@@ -114,7 +129,7 @@ def main() -> None:
         selected_rows.append(row)
     selected = gpd.GeoDataFrame(selected_rows, geometry="geometry", crs=world.crs)
 
-    fig, ax = plt.subplots(figsize=(20, 4.2))
+    fig, ax = plt.subplots(figsize=(args.fig_width, args.fig_height))
     world_clip.plot(ax=ax, color="#f7f7f4", edgecolor="#dadada", linewidth=0.55, zorder=1)
     regular = ~(selected["missing_road_surface"] | selected["no_crop_candidates"])
     selected.loc[regular].plot(
@@ -167,17 +182,19 @@ def main() -> None:
     handles.extend([loaded_patch, missing_patch, no_crop_patch])
     ax.legend(handles=handles, loc="lower left", frameon=True, fontsize=10)
 
-    ax.set_xlim(-180, 180)
-    ax.set_ylim(-28, 28)
+    ax.set_xlim(args.xmin, args.xmax)
+    ax.set_ylim(args.ymin, args.ymax)
+    if args.aspect:
+        ax.set_aspect(args.aspect)
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
     ax.set_title("Countries Within 700 km Of The Equator: Road Surface / Crop Input Status")
     ax.grid(alpha=0.18)
     fig.tight_layout()
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUT, dpi=180)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(args.out, dpi=180)
     plt.close(fig)
-    print(f"wrote={OUT}")
+    print(f"wrote={args.out}")
     print(f"countries={len(countries)} missing_roads={','.join(sorted(missing))} no_crop={','.join(sorted(NO_CROP_CANDIDATES))}")
 
 

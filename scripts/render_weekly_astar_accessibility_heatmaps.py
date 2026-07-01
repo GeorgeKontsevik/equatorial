@@ -9,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 from matplotlib.colors import ListedColormap
 from matplotlib.gridspec import GridSpec
 import numpy as np
@@ -17,22 +18,55 @@ import psycopg
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_URL = "postgresql://gk@127.0.0.1:5432/equatorial"
+REPO_ROOT = ROOT.parent
+LBR_SIDE_PANEL = REPO_ROOT / "itmo-phd-thesis-template-en" / "images" / "ch4" / "lbr_precip_grid_week_2024_08_19.png"
 CROP_ORDER = ["avocado", "banana", "mango", "pineapple", "plantain", "bean", "cott", "maiz", "pota", "rice", "sorg", "soyb", "sugc", "sunf", "whea"]
 DEST_TYPE_ORDER = ["city_5_100k", "city_100k_plus", "port", "airport"]
+MONTH_LABELS_RU = {
+    1: "янв",
+    2: "фев",
+    3: "мар",
+    4: "апр",
+    5: "май",
+    6: "июн",
+    7: "июл",
+    8: "авг",
+    9: "сен",
+    10: "окт",
+    11: "ноя",
+    12: "дек",
+}
+CROP_LABELS = {
+    "avocado": "авокадо",
+    "banana": "банан",
+    "mango": "манго",
+    "pineapple": "ананас",
+    "plantain": "плантан",
+    "bean": "фасоль",
+    "cott": "хлопок",
+    "maiz": "кукуруза",
+    "pota": "картофель",
+    "rice": "рис",
+    "sorg": "сорго",
+    "soyb": "соя",
+    "sugc": "сахарный тростник",
+    "sunf": "подсолнечник",
+    "whea": "пшеница",
+}
 DEST_TYPE_LABELS = {
-    "city_5_100k": "small city 5-100k",
-    "city_100k_plus": "large city 100k+",
-    "port": "port",
-    "airport": "airport",
+    "city_5_100k": "малый город 5-100 тыс.",
+    "city_100k_plus": "крупный город 100 тыс.+",
+    "port": "порт",
+    "airport": "аэропорт",
 }
 DAMAGE_CLASS_BINS_MIN = [180.0, 360.0, 540.0, 720.0, 1440.0]
 DAMAGE_CLASS_LABELS = [
-    "<3h",
-    "3-6h",
-    "6-9h",
-    "9-12h",
-    "12-24h",
-    ">24h",
+    "<3ч",
+    "3-6ч",
+    "6-9ч",
+    "9-12ч",
+    "12-24ч",
+    ">24ч",
 ]
 DAMAGE_CLASS_COLORS = ["#fffdf2", "#fee08b", "#fdae61", "#f46d43", "#d73027", "#7f0000"]
 
@@ -159,11 +193,44 @@ def week_labels(weeks: list[pd.Timestamp]) -> list[str]:
     last_month = None
     for week in weeks:
         if week.month != last_month:
-            labels.append(week.strftime("%b %d"))
+            labels.append(f"{MONTH_LABELS_RU.get(week.month, week.strftime('%b').lower())} {week.day:02d}")
             last_month = week.month
         else:
             labels.append("")
     return labels
+
+
+def crop_label(code: str) -> str:
+    return CROP_LABELS.get(code, code)
+
+
+def agg_label_ru(value: str) -> str:
+    return {"median": "медианная", "p90": "p90", "p95": "p95", "max": "максимальная"}.get(value, value)
+
+
+def precip_scope_label(value: str) -> str:
+    return {"all": "все", "paved": "асфальт", "unpaved": "грунт"}.get(value, value)
+
+
+def precip_scenario_label(value: str) -> str:
+    return {
+        "unknown_as_unpaved": "unknown считаются грунтовыми",
+        "unknown_as_paved": "unknown считаются асфальтом",
+        "actual_unpaved": "только фактически грунтовые",
+    }.get(value, value.replace("_", " "))
+
+
+def routing_scenario_label(value: str) -> str:
+    return {
+        "weekly_sum_penalty_v1": "недельный штраф по осадкам v1",
+    }.get(value, value)
+
+
+def origin_scope_label(value: str) -> str:
+    return {
+        "cluster_connected_allclusters_10small_3large_3ports_3airports": "все кластеры культур, 10 малых городов, 3 крупных, 3 порта, 3 аэропорта",
+        "top5_per_crop": "топ-5 источников по каждой культуре",
+    }.get(value, value)
 
 
 def crop_order(crops: list[str]) -> list[str]:
@@ -192,7 +259,7 @@ def plot_heatmap(
     subset = frame[frame["dest_type"].eq(dest_type)]
     label_name = DEST_TYPE_LABELS.get(dest_type, dest_type)
     if subset.empty:
-        ax.text(0.5, 0.5, f"No {label_name} routes", ha="center", va="center", transform=ax.transAxes)
+        ax.text(0.5, 0.5, f"Нет маршрутов: {label_name}", ha="center", va="center", transform=ax.transAxes)
         ax.set_axis_off()
         return None
 
@@ -230,14 +297,18 @@ def plot_heatmap(
         cmap.set_bad("#d9d9d9")
         image = ax.imshow(values, aspect="auto", interpolation="nearest", cmap=cmap, vmin=1.0, vmax=cap_value)
     ax.set_yticks(np.arange(len(crops)))
-    ax.set_yticklabels(crops)
+    ax.set_yticklabels([crop_label(crop) for crop in crops])
     ax.set_xticks(np.arange(len(weeks)))
     ax.set_xticklabels([])
     ax.tick_params(axis="x", labelbottom=False)
-    agg_label = {"median": "median", "p90": "p90", "p95": "p95", "max": "max"}[agg]
-    label = f"{agg_label} accessibility damage class by extra minutes" if metric == "delta_minutes" else f"{agg_label} travel-time multiplier"
-    ax.set_title(f"{label_name}: {label} by crop")
-    ax.set_ylabel("crop")
+    agg_label = agg_label_ru(agg)
+    label = (
+        f"{agg_label} класс деградации доступности по дополнительным минутам"
+        if metric == "delta_minutes"
+        else f"{agg_label} множитель времени пути"
+    )
+    ax.set_title(f"{label_name}: {label}")
+    ax.set_ylabel("культура")
     ax.grid(False)
 
     # Mark weeks where a crop has no reachable route for that destination type.
@@ -259,7 +330,7 @@ def plot_precip_boxplot(
 ) -> None:
     precip_frame = precip_frame.copy()
     if precip_frame.empty:
-        ax.text(0.5, 0.5, "No precipitation boxplot rows", ha="center", va="center", transform=ax.transAxes)
+        ax.text(0.5, 0.5, "Нет данных по недельным осадкам", ha="center", va="center", transform=ax.transAxes)
         return
     precip_frame["week_start"] = pd.to_datetime(precip_frame["week_start"])
     by_week = {pd.Timestamp(row.week_start): row for row in precip_frame.itertuples(index=False)}
@@ -285,12 +356,14 @@ def plot_precip_boxplot(
         ax.bxp(stats, positions=positions, widths=0.55, showfliers=False, patch_artist=True)
         for patch in ax.patches:
             patch.set(facecolor="#9ecae1", alpha=0.55, edgecolor="#2b6c8a")
-    ax.set_title(f"Precipitation driver: ERA5 weekly rain sum, {precip_scope} roads, {precip_scenario.replace('_', ' ')}")
-    ax.set_ylabel("mm/week")
+    ax.set_title(
+        f"Осадки: недельная сумма ERA5, дороги = {precip_scope_label(precip_scope)}, сценарий = {precip_scenario_label(precip_scenario)}"
+    )
+    ax.set_ylabel("мм/нед.")
     ax.set_xlim(-0.5, len(weeks) - 0.5)
     ax.set_xticks(np.arange(len(weeks)))
     ax.set_xticklabels(week_labels(weeks), rotation=35, ha="right", fontsize=8)
-    ax.set_xlabel("week start")
+    ax.set_xlabel("начало недели")
     if precip_y_max is not None:
         ax.set_ylim(0, precip_y_max)
     ax.grid(axis="y", alpha=0.22)
@@ -302,8 +375,8 @@ def draw_penalty_thresholds(ax: plt.Axes, penalty_rules: pd.DataFrame, precip_y_
         return
     ymax = precip_y_max if precip_y_max is not None else ax.get_ylim()[1]
     styles = {
-        "unpaved": {"color": "#b2182b", "linestyle": ":", "linewidth": 1.15, "label": "unpaved"},
-        "paved": {"color": "#2166ac", "linestyle": "--", "linewidth": 1.05, "label": "paved"},
+        "unpaved": {"color": "#b2182b", "linestyle": ":", "linewidth": 1.15, "label": "грунт"},
+        "paved": {"color": "#2166ac", "linestyle": "--", "linewidth": 1.05, "label": "асфальт"},
     }
     used_labels: set[str] = set()
     threshold_values: dict[str, list[float]] = {}
@@ -325,13 +398,13 @@ def draw_penalty_thresholds(ax: plt.Axes, penalty_rules: pd.DataFrame, precip_y_
             )
             used_labels.add(style["label"])
     if threshold_values:
-        lines = ["thresholds used"]
+        lines = ["использованные пороги"]
         for road_type in ["paved", "unpaved"]:
             values = threshold_values.get(road_type, [])
             if values:
-                label = "unpaved + unknown ···" if road_type == "unpaved" else "paved --"
+                label = "грунт + unknown ···" if road_type == "unpaved" else "асфальт --"
                 joined = ", ".join(f"{value:g}" for value in sorted(set(values)))
-                lines.append(f"{label}: {joined} mm/wk")
+                lines.append(f"{label}: {joined} мм/нед.")
         ax.text(
             0.995,
             0.965,
@@ -369,16 +442,29 @@ def plot_country(
     if not dest_types:
         dest_types = sorted(frame["dest_type"].dropna().unique().tolist())
 
-    fig = plt.figure(figsize=(15.8, max(11.8, 3.8 + len(dest_types) * 2.6 + len(crops) * 0.50)))
-    grid = GridSpec(
-        len(dest_types) + 1,
-        2,
-        figure=fig,
-        height_ratios=[*[1.0 for _ in dest_types], 0.72],
-        width_ratios=[1.0, 0.030],
-        hspace=0.46,
-        wspace=0.025,
-    )
+    side_panel_path = LBR_SIDE_PANEL if iso.upper() == "LBR" and LBR_SIDE_PANEL.exists() else None
+    use_side_panel = side_panel_path is not None
+    fig = plt.figure(figsize=((18.6 if use_side_panel else 15.8), max(11.8, 3.8 + len(dest_types) * 2.6 + len(crops) * 0.50)))
+    if use_side_panel:
+        grid = GridSpec(
+            len(dest_types) + 1,
+            3,
+            figure=fig,
+            height_ratios=[*[1.0 for _ in dest_types], 0.72],
+            width_ratios=[1.0, 0.030, 0.74],
+            hspace=0.46,
+            wspace=0.08,
+        )
+    else:
+        grid = GridSpec(
+            len(dest_types) + 1,
+            2,
+            figure=fig,
+            height_ratios=[*[1.0 for _ in dest_types], 0.72],
+            width_ratios=[1.0, 0.030],
+            hspace=0.46,
+            wspace=0.025,
+        )
     heat_axes = []
     shared_ax = None
     for row_idx, _dest_type in enumerate(dest_types):
@@ -389,6 +475,10 @@ def plot_country(
     precip_ax = fig.add_subplot(grid[len(dest_types), 0], sharex=shared_ax)
     cbar_ax = fig.add_subplot(grid[: len(dest_types), 1])
     fig.add_subplot(grid[len(dest_types), 1]).set_axis_off()
+    if use_side_panel:
+        side_ax = fig.add_subplot(grid[:, 2])
+        side_ax.imshow(mpimg.imread(side_panel_path))
+        side_ax.set_axis_off()
     images = []
     for ax, dest_type in zip(heat_axes, dest_types):
         image = plot_heatmap(ax, frame, dest_type, weeks, crops, metric, agg, cap_value)
@@ -404,9 +494,9 @@ def plot_country(
             cbar.set_ticks(np.arange(len(DAMAGE_CLASS_LABELS)))
             cbar.set_ticklabels(DAMAGE_CLASS_LABELS)
             cbar.ax.tick_params(labelsize=8)
-            cbar.set_label("Accessibility damage proxy from extra route delay")
+            cbar.set_label("Прокси деградации доступности по дополнительной задержке маршрута")
         else:
-            cbar.set_label(f"Median travel-time multiplier vs OD baseline, capped at {cap_value:g}x")
+            cbar.set_label(f"Медианный множитель времени пути относительно базового OD, потолок {cap_value:g}x")
     plot_precip_boxplot(precip_ax, precip_frame, penalty_rules, weeks, precip_scenario, precip_scope, precip_y_max)
     for ax in heat_axes:
         ax.tick_params(axis="x", labelbottom=False)
@@ -416,19 +506,19 @@ def plot_country(
     max_ratio = float(frame["travel_ratio"].max(skipna=True) or 0)
     max_delta = float(frame["delta_minutes"].max(skipna=True) or 0)
     fig.suptitle(
-        f"{iso} 2024 weekly accessibility impact | routing: {scenario} | {origin_scope} | agg={agg}\n"
-        f"weeks={len(weeks)}/53 | ok={ok_rows:,}/{all_rows:,} | "
-        f"max_delta={max_delta:.0f} min | max={max_ratio:.1f}x | unknown roads treated as unpaved",
+        f"{iso} 2024: недельное влияние осадков на доступность | сценарий: {routing_scenario_label(scenario)} | источники: {origin_scope_label(origin_scope)} | агрегация: {agg_label_ru(agg)}\n"
+        f"недель={len(weeks)}/53 | валидных маршрутов={ok_rows:,}/{all_rows:,} | "
+        f"макс. задержка={max_delta:.0f} мин | макс. множитель={max_ratio:.1f}x | дороги с unknown-покрытием считаются грунтовыми",
         y=0.988,
         fontsize=11.0,
     )
     fig.text(
         0.07,
         0.045,
-        f"Heatmap cell = {agg} extra minutes across OD routes for crop/week; baseline = best week for same OD route; x = no valid route.\n"
-        "OD scope is encoded in the origin_scope title; current allclusters runs include all stored crop-cluster terminals and requested destination limits. "
-        "Delay classes focus on 6-12h; <3h is low, and >=12h is shown as red severe delay. "
-        "Precipitation = all roads, unknown as unpaved, ERA5 weekly sum.",
+        f"Ячейка матрицы = {agg} дополнительных минут по OD-маршрутам для культуры и недели; базовый уровень = лучшая неделя для того же OD; x = нет валидного маршрута.\n"
+        "Состав источников указан в заголовке; режим allclusters включает все сохранённые терминалы кластеров культур и заданные лимиты по назначениям. "
+        "Классы задержки акцентируют интервалы 6-12 часов; <3ч = низкая деградация, >=12ч = тяжёлая деградация. "
+        "Осадки: ERA5, недельная сумма, все дороги, участки с unknown-покрытием учитываются как грунтовые.",
         ha="left",
         va="center",
         fontsize=8.5,

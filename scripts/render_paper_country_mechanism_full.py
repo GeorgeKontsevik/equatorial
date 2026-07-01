@@ -772,7 +772,7 @@ def plot_crop_stat_heatmap(stats: pd.DataFrame, out_path: Path) -> dict[str, obj
             scaled = (values + 1.0) / 2.0
             support_col = f"{col}_supported"
             supported = plotted[support_col].tolist() if support_col in plotted.columns else [False] * len(plotted)
-            text = [f"{v:.2f}{'*' if ok else ''}" for v, ok in zip(values, supported)]
+            text = [f"{v:.2f}" if ok else "" for v, ok in zip(values, supported)]
         heat_cols.append(scaled)
         text_cols.append(text)
     heat = np.column_stack(heat_cols)
@@ -787,12 +787,14 @@ def plot_crop_stat_heatmap(stats: pd.DataFrame, out_path: Path) -> dict[str, obj
         for x in range(heat.shape[1]):
             col = columns[x][0]
             support_col = f"{col}_supported"
-            if col.startswith("rho_") and support_col in plotted.columns and not bool(plotted.iloc[y][support_col]):
+            supported_cell = not (col.startswith("rho_") and support_col in plotted.columns and not bool(plotted.iloc[y][support_col]))
+            if not supported_cell:
                 ax.add_patch(Rectangle((x - 0.5, y - 0.5), 1.0, 1.0, facecolor="#d9d9d9", edgecolor="#ffffff", linewidth=0.6, zorder=2))
             color = "white" if heat[y, x] > 0.72 or heat[y, x] < 0.18 else "#111111"
-            if col.startswith("rho_") and support_col in plotted.columns and not bool(plotted.iloc[y][support_col]):
+            if not supported_cell:
                 color = "#555555"
-            ax.text(x, y, text_cols[x][y], ha="center", va="center", fontsize=9, color=color, zorder=3)
+            if supported_cell:
+                ax.text(x, y, text_cols[x][y], ha="center", va="center", fontsize=9, color=color, zorder=3)
     ax.set_title("Crop-level correlations with severe accessibility delay")
     cbar = fig.colorbar(image, ax=ax, fraction=0.04, pad=0.03)
     cbar.set_label("Normalized display scale")
