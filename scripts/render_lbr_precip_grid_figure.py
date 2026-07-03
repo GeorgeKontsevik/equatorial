@@ -194,23 +194,21 @@ def render_precip_grid(
     cmap = plt.get_cmap("YlGnBu", len(levels) - 1)
     norm = BoundaryNorm(levels, cmap.N)
 
-    fig = plt.figure(figsize=(4.8, 10.2))
-    axes = [
-        fig.add_axes([0.09, 0.63, 0.82, 0.23]),
-        fig.add_axes([0.09, 0.15, 0.82, 0.27]),
-    ]
-    for ax in axes:
+    fig = plt.figure(figsize=(9, 12))
+    precip_ax = fig.add_axes([0.02, 0.585, 0.96, 0.38])
+    road_ax = fig.add_axes([0.02, 0.035, 0.96, 0.38])
+    for ax in (precip_ax, road_ax):
         boundary.plot(ax=ax, color="white", edgecolor="#5a5a5a", linewidth=0.75, zorder=2)
         boundary.boundary.plot(ax=ax, color="#5a5a5a", linewidth=0.85, zorder=4)
-        ax.set_xlim(bounds[0] - 0.25, bounds[2] + 0.25)
-        ax.set_ylim(bounds[1] - 0.25, bounds[3] + 0.25)
+        ax.set_xlim(bounds[0] - 0.05, bounds[2] + 0.05)
+        ax.set_ylim(bounds[1] - 0.05, bounds[3] + 0.05)
         ax.set_aspect("equal", adjustable="box")
         ax.set_axis_off()
 
     if not road_damage.empty:
         all_roads = road_damage[["geometry"]]
         damaged = road_damage[road_damage["is_damaged"]].copy()
-        all_roads.plot(ax=axes[0], color="#d3d3d3", linewidth=0.15, alpha=0.55, zorder=2.5)
+        all_roads.plot(ax=road_ax, color="#d3d3d3", linewidth=0.15, alpha=0.55, zorder=2.5)
         if not damaged.empty:
             severity_bins = [
                 (0.90, "#facc15"),
@@ -232,20 +230,20 @@ def render_precip_grid(
                 else:
                     subset = damaged[np.isclose(damaged["speed_multiplier"], 0.05)]
                 if not subset.empty:
-                    subset.plot(ax=axes[0], color=color, linewidth=0.28, alpha=0.92, zorder=3.5)
-    axes[0].set_title(f"Деградация дорог, {week_start:%d.%m.%Y}", fontsize=13, fontweight="semibold", pad=10)
+                    subset.plot(ax=road_ax, color=color, linewidth=0.28, alpha=0.92, zorder=3.5)
+    road_ax.set_title(f"Деградация дорог, {week_start:%d.%m.%Y}", fontsize=15, fontweight="semibold", pad=8)
     damage_colors = ["#facc15", "#f59e0b", "#dc2626", "#7f1d1d"]
     damage_labels = ["слабое", "среднее", "сильное", "закрытие"]
     damage_cmap = ListedColormap(damage_colors)
     damage_norm = BoundaryNorm([0, 1, 2, 3, 4], damage_cmap.N)
-    damage_cax = fig.add_axes([0.12, 0.515, 0.76, 0.016])
+    damage_cax = fig.add_axes([0.16, 0.020, 0.68, 0.012])
     damage_sm = ScalarMappable(norm=damage_norm, cmap=damage_cmap)
     damage_sm.set_array([])
     damage_cbar = fig.colorbar(damage_sm, cax=damage_cax, orientation="horizontal", ticks=[0.5, 1.5, 2.5, 3.5])
-    damage_cbar.ax.set_xticklabels(damage_labels, fontsize=8)
-    fig.text(0.5, 0.538, "Уровень деградации дорог", ha="center", va="bottom", fontsize=10)
+    damage_cbar.ax.set_xticklabels(damage_labels, fontsize=10)
+    fig.text(0.5, 0.040, "Уровень деградации дорог", ha="center", va="bottom", fontsize=12)
 
-    scatter = axes[1].scatter(
+    scatter = precip_ax.scatter(
         grid_inside["cell_lon"],
         grid_inside["cell_lat"],
         c=grid_inside["tp_sum_weekly_mm"],
@@ -257,11 +255,11 @@ def render_precip_grid(
         alpha=0.92,
         zorder=3,
     )
-    axes[1].set_title(f"Осадки, {week_start:%d.%m.%Y}", fontsize=14, fontweight="semibold", pad=10)
-    cax = fig.add_axes([0.10, 0.055, 0.80, 0.022])
+    precip_ax.set_title(f"Осадки, {week_start:%d.%m.%Y}", fontsize=15, fontweight="semibold", pad=8)
+    cax = fig.add_axes([0.14, 0.515, 0.72, 0.014])
     cbar = fig.colorbar(scatter, cax=cax, orientation="horizontal", ticks=levels[:-1])
-    cbar.set_label("мм за неделю", fontsize=11, labelpad=4)
-    cbar.ax.tick_params(labelsize=10)
+    cbar.set_label("мм за неделю", fontsize=13, labelpad=4)
+    cbar.ax.tick_params(labelsize=11)
     fig.savefig(out_path, dpi=180, transparent=False)
     plt.close(fig)
     return {

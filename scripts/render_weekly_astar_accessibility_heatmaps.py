@@ -214,15 +214,15 @@ def precip_scope_label(value: str) -> str:
 
 def precip_scenario_label(value: str) -> str:
     return {
-        "unknown_as_unpaved": "unknown считаются грунтовыми",
-        "unknown_as_paved": "unknown считаются асфальтом",
+        "unknown_as_unpaved": "дороги с неизвестным покрытием считаются грунтовыми",
+        "unknown_as_paved": "дороги с неизвестным покрытием считаются асфальтированными",
         "actual_unpaved": "только фактически грунтовые",
     }.get(value, value.replace("_", " "))
 
 
 def routing_scenario_label(value: str) -> str:
     return {
-        "weekly_sum_penalty_v1": "недельный штраф по осадкам v1",
+        "weekly_sum_penalty_v1": "недельный штраф по осадкам, версия 1",
     }.get(value, value)
 
 
@@ -402,7 +402,7 @@ def draw_penalty_thresholds(ax: plt.Axes, penalty_rules: pd.DataFrame, precip_y_
         for road_type in ["paved", "unpaved"]:
             values = threshold_values.get(road_type, [])
             if values:
-                label = "грунт + unknown ···" if road_type == "unpaved" else "асфальт --"
+                label = "грунт + неизвестное покрытие ···" if road_type == "unpaved" else "асфальт --"
                 joined = ", ".join(f"{value:g}" for value in sorted(set(values)))
                 lines.append(f"{label}: {joined} мм/нед.")
         ax.text(
@@ -506,19 +506,19 @@ def plot_country(
     max_ratio = float(frame["travel_ratio"].max(skipna=True) or 0)
     max_delta = float(frame["delta_minutes"].max(skipna=True) or 0)
     fig.suptitle(
-        f"{iso} 2024: недельное влияние осадков на доступность | сценарий: {routing_scenario_label(scenario)} | источники: {origin_scope_label(origin_scope)} | агрегация: {agg_label_ru(agg)}\n"
+        f"{'Либерия' if iso.upper() == 'LBR' else iso} 2024: недельное влияние осадков на доступность | сценарий: {routing_scenario_label(scenario)} | источники: {origin_scope_label(origin_scope)} | агрегация: {agg_label_ru(agg)}\n"
         f"недель={len(weeks)}/53 | валидных маршрутов={ok_rows:,}/{all_rows:,} | "
-        f"макс. задержка={max_delta:.0f} мин | макс. множитель={max_ratio:.1f}x | дороги с unknown-покрытием считаются грунтовыми",
+        f"макс. задержка={max_delta:.0f} мин | макс. множитель={max_ratio:.1f} раза | дороги с неизвестным покрытием считаются грунтовыми",
         y=0.988,
         fontsize=11.0,
     )
     fig.text(
         0.07,
         0.045,
-        f"Ячейка матрицы = {agg} дополнительных минут по OD-маршрутам для культуры и недели; базовый уровень = лучшая неделя для того же OD; x = нет валидного маршрута.\n"
-        "Состав источников указан в заголовке; режим allclusters включает все сохранённые терминалы кластеров культур и заданные лимиты по назначениям. "
+        f"Ячейка матрицы = {agg_label_ru(agg)} оценка дополнительных минут по маршрутам «источник — назначение» для культуры и недели; базовый уровень = лучшая неделя для того же маршрута; × = нет валидного маршрута.\n"
+        "Состав источников указан в заголовке; режим всех кластеров включает все сохранённые терминалы кластеров культур и заданные лимиты по назначениям. "
         "Классы задержки акцентируют интервалы 6-12 часов; <3ч = низкая деградация, >=12ч = тяжёлая деградация. "
-        "Осадки: ERA5, недельная сумма, все дороги, участки с unknown-покрытием учитываются как грунтовые.",
+        "Осадки: ERA5, недельная сумма, все дороги, участки с неизвестным покрытием учитываются как грунтовые.",
         ha="left",
         va="center",
         fontsize=8.5,
