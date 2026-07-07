@@ -1,19 +1,22 @@
 # equatorial
 
-Equatorial road-surface, precipitation, and crop-accessibility experiments.
+Equatorial-region experiments for road-surface status, rainfall exposure, and crop-accessibility inputs used in Chapter 4 thesis figures.
 
-## Scheme
+## System Map
 
 ```mermaid
 flowchart LR
-    A[Inputs] --> B[Run: scripts/fetch_equator_700km_full_year_data.sh]
-    B --> C[Checked outputs]
-    C --> D[Paper / thesis use]
+    ERA5[ERA5 rainfall] --> WEEK[weekly thresholds]
+    OSM[roads + destinations] --> SURFACE[road-surface status]
+    CROP[crop origins] --> ACCESS[crop access inputs]
+    WEEK --> MAPS[thesis maps]
+    SURFACE --> MAPS
+    ACCESS --> MAPS
 ```
 
 ## Main Result
 
-![Main result](equator_country_belt_map_700km.png)
+![Equatorial country belt map](equator_country_belt_map_700km.png)
 
 ## Run
 
@@ -25,14 +28,12 @@ Human:
 bash scripts/fetch_equator_700km_full_year_data.sh
 ```
 
-Agent:
-
-After any run inspect overlay outputs and weekly summary tables; do not treat fetch success as analysis success.
+Agent: after runs inspect overlay PNGs and weekly summary tables; fetch success is not analysis success.
 
 ## Publication
 
-See `Research Compilation I.pdf` and thesis publication bundle.
+See `Research Compilation I.pdf`; thesis-ready figure copies are in `../itmo-phd-thesis-template-en/thesis_repro/ch4_equator_belt_map/`.
 
 ## Next Steps / Heuristics
 
-Heuristic: precipitation-only ERA5 path is current production path; flood depth remains deferred unless real depth data exists.
+Heuristic: precipitation-only ERA5 is the current production path. Flood-depth modeling stays deferred until real depth data exists.
