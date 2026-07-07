@@ -1,5 +1,7 @@
 # equatorial
 
+[![OSA-improved](https://img.shields.io/badge/improved%20by-OSA-yellow)](https://github.com/aimclub/OSA)
+
 Equatorial-region experiments for road-surface status, rainfall exposure, and crop-accessibility inputs used in Chapter 4 thesis figures.
 
 ## System Map
@@ -37,3 +39,4 @@ See `Research Compilation I.pdf`; thesis-ready figure copies are in `../itmo-phd
 ## Next Steps / Heuristics
 
 Heuristic: precipitation-only ERA5 is the current production path. Flood-depth modeling stays deferred until real depth data exists.
+
