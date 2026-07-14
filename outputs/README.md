@@ -26,6 +26,12 @@ derived tables, and figures together.
 - `astar_accessibility_weekly/paper_lbr_precip_grid/` and
   `astar_accessibility_weekly/lbr_two_city_heatmap/`: current LBR chapter figures.
 
+The protected source render
+`astar_accessibility_weekly/paper_lbr_precip_grid/lbr_era5_grid_coverage_precip_2024_08_19.png`
+has a self-contained renderer and frozen data bundle under
+`supporting_materials/lbr_era5_grid_coverage/`. The crop/cluster/road/destination
+figure family is indexed in `supporting_materials/LBR_FIGURE_PROVENANCE.md`.
+
 ## Canonical study-area map
 
 `equator_country_belt_road_surface_missing_hatched.png` is the current canonical

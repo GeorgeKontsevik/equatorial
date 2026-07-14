@@ -22,6 +22,9 @@ one-off experiments belong under `old/`.
 - `render_base_route_surface_mix.py`: route-surface plots.
 - `render_paper_*`: reproducible paper experiment tables and figures.
 - `render_crop_*`, `render_four_country_*`, `render_lbr_*`: dissertation figures.
+- `render_lbr_era5_grid_coverage_precip.py`: preserved self-contained LBR ERA5
+  grid-coverage and weekly-precipitation renderer; its frozen GeoPackage is in
+  `supporting_materials/lbr_era5_grid_coverage/`.
 - `render_top12_country_temporal_ru.py`: Russian top-12 rainfall/delay panel.
 - `compose_lbr_heatmap_with_side_panel.py`: compose the LBR chapter panel.
 - `render_equator_belt_road_surface_status_map.py`: canonical and latest renderer
