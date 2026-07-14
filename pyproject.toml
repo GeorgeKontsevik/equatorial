@@ -29,11 +29,6 @@ dependencies = [
 
 [project.scripts]
 equatorial-fetch-data = "src.data.fetch:main"
-equatorial-inspect-data = "src.data.inspect:main"
-equatorial-render-country-previews = "src.data.render_country_previews:main"
-equatorial-list-equator-countries = "src.data.list_equatorial_countries:main"
-equatorial-road-hazard-overnight = "src.data.run_road_hazard_overnight_worker:main"
-equatorial-select-crop-origins = "src.data.select_baseline_connected_crop_origins:main"
 
 [build-system]
 requires = ["setuptools>=68"]

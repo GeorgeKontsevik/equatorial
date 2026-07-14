@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""Canonical renderer for the current equatorial-belt input-status map.
+
+The authoritative output is
+`outputs/equator_country_belt_road_surface_missing_hatched.png`. Derived thesis
+crops or translated copies are not replacements for this source render.
+"""
+
 from __future__ import annotations
 
 import argparse

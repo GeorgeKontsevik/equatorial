@@ -6,7 +6,7 @@ It supersedes the old `top20` / `component_connected` artifacts.
 ## Scope
 
 - Data source for crop origins: CROPGRIDS-derived `eq.crop_origin_candidates`.
-- Do not use SPAM crop origins for this run.
+- Use only CROPGRIDS-derived crop origins for this run.
 - Do not run countries without crop candidates, for example `GNQ`.
 - Current standard OD scope:
   - all stored crop-cluster terminals per crop, not top-N filtering;
@@ -131,10 +131,15 @@ Expected for a completed country: `weeks = 53`, `not_ok = 0`.
 
 ## Current Completed Countries
 
-As of this note, completed and rendered countries are:
+Current manifests and route diagnostics contain complete final-scope results
+for these 29 countries:
 
 ```text
-BDI BEN BRN CAF COG GAB GUY LBR PNG RWA SSD SUR TGO
+AGO BDI BEN BRN CAF CIV CMR COD COG COL ECU ETH GAB GUY KEN LBR LKA MYS
+NGA PER PNG RWA SOM SSD SUR TGO TZA UGA VEN
 ```
 
-Remaining normal-batch countries should be processed by ascending graph size.
+`GNQ` has no crop candidates. `BRA` and `IDN` remain outside the normal batch
+because the current component-connection method does not scale to their graph
+sizes. Verify live DB coverage before rerunning or extending the country set;
+do not use the presence of a PNG alone as completion evidence.

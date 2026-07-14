@@ -29,6 +29,12 @@ DEFAULT_COUNTRY = "LBR"
 DEFAULT_MONTHS = [7, 8]
 DEFAULT_OUT_DIR = ROOT / "outputs" / "astar_accessibility_weekly" / "paper_lbr_precip_grid"
 DEFAULT_THESIS_IMAGE = REPO_ROOT / "itmo-phd-thesis-template-en" / "images" / "ch4" / "lbr_precip_grid_week_2024_08_19.png"
+ROAD_TITLE_PREFIX = "Деградация дорог"
+PRECIP_TITLE_PREFIX = "Осадки"
+DAMAGE_LABELS = ["слабое", "среднее", "сильное", "закрытие"]
+DAMAGE_COLORBAR_LABEL = "Уровень деградации дорог"
+PRECIP_COLORBAR_LABEL = "мм за неделю"
+DATE_FORMAT = "%d.%m.%Y"
 
 
 def parse_args() -> argparse.Namespace:
@@ -231,17 +237,16 @@ def render_precip_grid(
                     subset = damaged[np.isclose(damaged["speed_multiplier"], 0.05)]
                 if not subset.empty:
                     subset.plot(ax=road_ax, color=color, linewidth=0.28, alpha=0.92, zorder=3.5)
-    road_ax.set_title(f"Деградация дорог, {week_start:%d.%m.%Y}", fontsize=15, fontweight="semibold", pad=8)
+    road_ax.set_title(f"{ROAD_TITLE_PREFIX}, {week_start:{DATE_FORMAT}}", fontsize=15, fontweight="semibold", pad=8)
     damage_colors = ["#facc15", "#f59e0b", "#dc2626", "#7f1d1d"]
-    damage_labels = ["слабое", "среднее", "сильное", "закрытие"]
     damage_cmap = ListedColormap(damage_colors)
     damage_norm = BoundaryNorm([0, 1, 2, 3, 4], damage_cmap.N)
     damage_cax = fig.add_axes([0.16, 0.020, 0.68, 0.012])
     damage_sm = ScalarMappable(norm=damage_norm, cmap=damage_cmap)
     damage_sm.set_array([])
     damage_cbar = fig.colorbar(damage_sm, cax=damage_cax, orientation="horizontal", ticks=[0.5, 1.5, 2.5, 3.5])
-    damage_cbar.ax.set_xticklabels(damage_labels, fontsize=10)
-    fig.text(0.5, 0.040, "Уровень деградации дорог", ha="center", va="bottom", fontsize=12)
+    damage_cbar.ax.set_xticklabels(DAMAGE_LABELS, fontsize=10)
+    fig.text(0.5, 0.040, DAMAGE_COLORBAR_LABEL, ha="center", va="bottom", fontsize=12)
 
     scatter = precip_ax.scatter(
         grid_inside["cell_lon"],
@@ -255,10 +260,10 @@ def render_precip_grid(
         alpha=0.92,
         zorder=3,
     )
-    precip_ax.set_title(f"Осадки, {week_start:%d.%m.%Y}", fontsize=15, fontweight="semibold", pad=8)
+    precip_ax.set_title(f"{PRECIP_TITLE_PREFIX}, {week_start:{DATE_FORMAT}}", fontsize=15, fontweight="semibold", pad=8)
     cax = fig.add_axes([0.14, 0.515, 0.72, 0.014])
     cbar = fig.colorbar(scatter, cax=cax, orientation="horizontal", ticks=levels[:-1])
-    cbar.set_label("мм за неделю", fontsize=13, labelpad=4)
+    cbar.set_label(PRECIP_COLORBAR_LABEL, fontsize=13, labelpad=4)
     cbar.ax.tick_params(labelsize=11)
     fig.savefig(out_path, dpi=180, transparent=False)
     plt.close(fig)

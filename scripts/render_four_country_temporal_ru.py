@@ -36,6 +36,11 @@ MONTH_LABELS = {
 }
 RAIN_COLOR = "#3498db"
 DELAY_COLOR = "#e53935"
+RAIN_YLABEL = "осадки, мм/нед."
+DELAY_YLABEL = "задержка, ч/нед."
+RAIN_LEGEND_LABEL = "осадки"
+DELAY_LEGEND_LABEL = "задержка доступности"
+TITLE = "Осадки и задержка доступности"
 
 
 def main() -> None:
@@ -57,14 +62,14 @@ def main() -> None:
         ax.set_title(COUNTRY_LABELS[country], fontsize=17, fontweight="semibold", pad=10)
         ax.tick_params(axis="y", labelcolor=RAIN_COLOR, labelsize=10)
         if index % 2 == 0:
-            ax.set_ylabel("осадки, мм/нед.", color=RAIN_COLOR, fontsize=11)
+            ax.set_ylabel(RAIN_YLABEL, color=RAIN_COLOR, fontsize=11)
 
         delay_ax = ax.twinx()
         delay_ax.plot(subset["week_start"], subset["weekly_burden_h"], color=DELAY_COLOR, linewidth=2.0)
         delay_ax.set_ylim(0, delay_max)
         delay_ax.tick_params(axis="y", labelcolor=DELAY_COLOR, labelsize=10)
         if index % 2 == 1:
-            delay_ax.set_ylabel("задержка, ч/нед.", color=DELAY_COLOR, fontsize=11)
+            delay_ax.set_ylabel(DELAY_YLABEL, color=DELAY_COLOR, fontsize=11)
         else:
             delay_ax.set_yticklabels([])
 
@@ -77,11 +82,11 @@ def main() -> None:
         ax.set_xlabel("2024", fontsize=11)
 
     legend = [
-        Line2D([0], [0], color=RAIN_COLOR, linewidth=2.4, label="осадки"),
-        Line2D([0], [0], color=DELAY_COLOR, linewidth=2.4, label="задержка доступности"),
+        Line2D([0], [0], color=RAIN_COLOR, linewidth=2.4, label=RAIN_LEGEND_LABEL),
+        Line2D([0], [0], color=DELAY_COLOR, linewidth=2.4, label=DELAY_LEGEND_LABEL),
     ]
     fig.legend(handles=legend, loc="lower center", ncol=2, frameon=False, fontsize=12, bbox_to_anchor=(0.5, 0.025))
-    fig.suptitle("Осадки и задержка доступности", fontsize=21, fontweight="semibold", y=0.992)
+    fig.suptitle(TITLE, fontsize=21, fontweight="semibold", y=0.992)
     fig.subplots_adjust(left=0.09, right=0.91, top=0.91, bottom=0.10, hspace=0.28, wspace=0.22)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUTPUT, dpi=200, facecolor="white")

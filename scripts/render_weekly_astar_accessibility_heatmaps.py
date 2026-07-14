@@ -79,7 +79,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render clearer crop x week A* accessibility heatmaps.")
     parser.add_argument("--db-url", default=DEFAULT_DB_URL)
     parser.add_argument("--scenario", default="weekly_sum_penalty_v1")
-    parser.add_argument("--origin-scope", default="top5_per_crop")
+    parser.add_argument(
+        "--origin-scope",
+        default="cluster_connected_allclusters_10small_3large_3ports_3airports",
+    )
     parser.add_argument("--countries", default="loaded", help="loaded or comma-separated ISO3 list")
     parser.add_argument("--min-weeks", type=int, default=1)
     parser.add_argument("--metric", choices=["delta_minutes", "ratio"], default="delta_minutes")

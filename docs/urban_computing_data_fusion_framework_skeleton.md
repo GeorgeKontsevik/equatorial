@@ -473,10 +473,9 @@ Safer version:
 - [ ] Confirm final country list.
 - [ ] Confirm whether BRN is excluded from affected summaries only because no point crosses threshold.
 - [ ] Confirm whether `weekly_sum_penalty_v1` uses weekly precipitation sum, hourly intensity, or another exact field in the active DB run.
-- [ ] Confirm final crop source is CROPGRIDS, not SPAM, for the current result.
+- [x] Final crop source for the current result is CROPGRIDS.
 - [ ] Confirm how unknown surface is treated in the active routing run.
 - [ ] Export route surface mix for all countries if using it as explanatory network mechanism.
 - [ ] Decide whether bubble size is absolute affected cluster weight or relative affected exposure share.
 - [ ] State clearly that baseline is the best observed week for the same OD pair.
 - [ ] Inspect final PNGs before claiming final figure quality.
-

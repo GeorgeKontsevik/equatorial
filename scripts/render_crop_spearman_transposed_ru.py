@@ -31,6 +31,8 @@ FACTORS = [
     ("rho_log_remoteness_h", "удалённость\nпо времени", 1.0),
     ("rho_actual_unpaved_time_share", "доля дорог\nбез покрытия", -1.0),
 ]
+TITLE = "Корреляция Спирмена с задержкой доступности"
+COLORBAR_LABEL = "ρ Спирмена"
 
 
 def display_matrix(frame: pd.DataFrame) -> np.ndarray:
@@ -60,14 +62,14 @@ def main() -> None:
         color = "white" if abs(value) >= 0.58 else "#222222"
         ax.text(column, row, f"{value:.2f}", ha="center", va="center", fontsize=17, color=color)
 
-    ax.set_title("Корреляция Спирмена с задержкой доступности", fontsize=19, fontweight="semibold", pad=24)
+    ax.set_title(TITLE, fontsize=19, fontweight="semibold", pad=24)
     ax.set_xticks(np.arange(-0.5, len(FACTORS), 1), minor=True)
     ax.set_yticks(np.arange(-0.5, len(CROPS), 1), minor=True)
     ax.grid(which="minor", color="white", linewidth=2)
     ax.tick_params(which="minor", bottom=False, left=False)
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.045, pad=0.035)
-    colorbar.set_label("ρ Спирмена", fontsize=14, labelpad=10)
+    colorbar.set_label(COLORBAR_LABEL, fontsize=14, labelpad=10)
     colorbar.ax.tick_params(labelsize=11)
 
     fig.subplots_adjust(left=0.15, right=0.89, top=0.80, bottom=0.08)
