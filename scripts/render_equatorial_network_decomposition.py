@@ -20,7 +20,6 @@ def font(size, bold=False):
 
 
 F_TITLE = font(38, True)
-F_SUBTITLE = font(22)
 F_PANEL = font(25, True)
 F_H = font(20, True)
 F = font(18)
@@ -194,7 +193,6 @@ def road_sample(x, y, color, title, detail):
 
 
 d.text((55, 35), "Equatorial crop accessibility as a weather-perturbed road-network problem", font=F_TITLE, fill=INK)
-d.text((55, 84), "From crop origins and logistics destinations to weekly edge costs, routes, and accessibility outcomes", font=F_SUBTITLE, fill=MUTED)
 
 Y, PH = 135, 710
 panel(45, Y, 500, PH, 1, "Crop-specific network")
